@@ -1,6 +1,6 @@
 -- engineffi.lua
 -- TupiEngine - Declarações FFI para o LuaJIT
--- Liga o Lua com as funções C do RendererGL
+-- Liga o Lua com as funções C do RendererGL, ColisoesAABB e Sprites
 
 local ffi = require("ffi")
 
@@ -61,9 +61,63 @@ ffi.cdef[[
     ============================ */
     double tupi_scroll_x(void);
     double tupi_scroll_y(void);
+
+    /* ============================
+       COLISÕES AABB
+    ============================ */
+    typedef struct { float x, y, largura, altura; } TupiRetCol;
+    typedef struct { float x, y, raio;             } TupiCircCol;
+    typedef struct { int colidindo; float dx, dy;  } TupiColisao;
+
+    int         tupi_ret_ret     (TupiRetCol a, TupiRetCol b);
+    TupiColisao tupi_ret_ret_info(TupiRetCol a, TupiRetCol b);
+    int         tupi_cir_cir     (TupiCircCol a, TupiCircCol b);
+    TupiColisao tupi_cir_cir_info(TupiCircCol a, TupiCircCol b);
+    int         tupi_ret_cir     (TupiRetCol r, TupiCircCol c);
+    int         tupi_ponto_ret   (float px, float py, TupiRetCol r);
+    int         tupi_ponto_cir   (float px, float py, TupiCircCol c);
+
+    /* ============================
+       SPRITES
+    ============================ */
+
+    // Estrutura da imagem carregada (textura na GPU)
+    typedef struct {
+        unsigned int textura;
+        int largura;
+        int altura;
+    } TupiSprite;
+
+    // Estrutura do objeto na tela
+    typedef struct {
+        float x, y;
+        float largura, altura;
+        int   coluna, linha;
+        float transparencia;
+        float escala;
+        TupiSprite* imagem;
+    } TupiObjeto;
+
+    // Carrega um PNG do disco — retorna ponteiro ou NULL se falhar
+    TupiSprite* tupi_sprite_carregar(const char* caminho);
+
+    // Libera a textura e a memória do sprite
+    void tupi_sprite_destruir(TupiSprite* sprite);
+
+    // Cria um objeto com todos os parâmetros
+    TupiObjeto tupi_objeto_criar(
+        float x, float y,
+        float largura, float altura,
+        int coluna, int linha,
+        float transparencia,
+        float escala,
+        TupiSprite* imagem
+    );
+
+    // Desenha o objeto na tela
+    void tupi_objeto_desenhar(TupiObjeto* obj);
 ]]
 
--- Carrega a biblioteca compartilhada compilada
 local tupiC = ffi.load("./libtupi.so")
 
 return tupiC

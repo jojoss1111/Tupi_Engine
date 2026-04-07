@@ -4,9 +4,10 @@
 
 #include "RendererGL.h"
 #include "../Inputs/Inputs.h"
+#include "../Sprites/Sprites.h"
 
 // ============================================================
-// SHADERS GLSL
+// SHADERS GLSL (formas 2D sem textura)
 // ============================================================
 
 static const char* _vert_src =
@@ -45,16 +46,13 @@ static float _cor_a = 1.0f;
 static double _tempo_anterior = 0.0;
 static double _delta          = 0.0;
 
-// Recursos OpenGL
 static GLuint _shader   = 0;
 static GLuint _vao      = 0;
 static GLuint _vbo      = 0;
 
-// Locations dos uniforms
 static GLint _loc_projecao = -1;
 static GLint _loc_cor      = -1;
 
-// Tamanho máximo de vértices por draw call (círculo com muitos segmentos)
 #define TUPI_MAX_VERTICES 1024
 
 // ============================================================
@@ -65,7 +63,6 @@ static GLuint _compilar_shader(GLenum tipo, const char* src) {
     GLuint s = glCreateShader(tipo);
     glShaderSource(s, 1, &src, NULL);
     glCompileShader(s);
-
     GLint ok;
     glGetShaderiv(s, GL_COMPILE_STATUS, &ok);
     if (!ok) {
@@ -79,12 +76,10 @@ static GLuint _compilar_shader(GLenum tipo, const char* src) {
 static GLuint _criar_programa(const char* vert, const char* frag) {
     GLuint vs = _compilar_shader(GL_VERTEX_SHADER,   vert);
     GLuint fs = _compilar_shader(GL_FRAGMENT_SHADER, frag);
-
     GLuint prog = glCreateProgram();
     glAttachShader(prog, vs);
     glAttachShader(prog, fs);
     glLinkProgram(prog);
-
     GLint ok;
     glGetProgramiv(prog, GL_LINK_STATUS, &ok);
     if (!ok) {
@@ -92,7 +87,6 @@ static GLuint _criar_programa(const char* vert, const char* frag) {
         glGetProgramInfoLog(prog, sizeof(log), NULL, log);
         fprintf(stderr, "[TupiEngine] Erro ao linkar programa: %s\n", log);
     }
-
     glDeleteShader(vs);
     glDeleteShader(fs);
     return prog;
@@ -104,8 +98,6 @@ static GLuint _criar_programa(const char* vert, const char* frag) {
 // ============================================================
 
 static void _atualizar_projecao(int largura, int altura) {
-    // Matriz ortográfica 4x4 (column-major para OpenGL)
-    // glOrtho(0, largura, altura, 0, -1, 1)
     float L = 0.0f, R = (float)largura;
     float T = 0.0f, B = (float)altura;
     float N = -1.0f, F = 1.0f;
@@ -119,6 +111,9 @@ static void _atualizar_projecao(int largura, int altura) {
 
     glUseProgram(_shader);
     glUniformMatrix4fv(_loc_projecao, 1, GL_FALSE, proj);
+
+    // Compartilha a matriz com o sistema de sprites
+    tupi_sprite_set_projecao(proj);
 }
 
 static void _configurar_projecao(int largura, int altura) {
@@ -133,29 +128,21 @@ static void _callback_resize(GLFWwindow* janela, int largura, int altura) {
     _configurar_projecao(largura, altura);
 }
 
-// ============================================================
-// CALLBACK DE ERRO DO GLFW
-// ============================================================
-
 static void _erro_glfw(int codigo, const char* descricao) {
     fprintf(stderr, "[TupiEngine] Erro GLFW %d: %s\n", codigo, descricao);
 }
 
 // ============================================================
-// DRAW CALL GENÉRICO
-// Envia vértices para o VBO e desenha com o modo especificado
+// DRAW CALL GENÉRICO (formas 2D)
 // ============================================================
 
 static void _desenhar(GLenum modo, float* verts, int n) {
     glBindVertexArray(_vao);
     glBindBuffer(GL_ARRAY_BUFFER, _vbo);
     glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(float) * 2 * n, verts);
-
     glUseProgram(_shader);
     glUniform4f(_loc_cor, _cor_r, _cor_g, _cor_b, _cor_a);
-
     glDrawArrays(modo, 0, n);
-
     glBindVertexArray(0);
 }
 
@@ -171,11 +158,10 @@ int tupi_janela_criar(int largura, int altura, const char* titulo) {
         return 0;
     }
 
-    // OpenGL 3.3 Core Profile
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-    glfwWindowHint(GLFW_SAMPLES, 4); // MSAA 4x
+    glfwWindowHint(GLFW_SAMPLES, 4);
 
 #ifdef __APPLE__
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
@@ -192,9 +178,8 @@ int tupi_janela_criar(int largura, int altura, const char* titulo) {
     _altura  = altura;
 
     glfwMakeContextCurrent(_janela);
-    glfwSwapInterval(1); // VSync
+    glfwSwapInterval(1);
 
-    // Carregar funções OpenGL via GLAD
     if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
         fprintf(stderr, "[TupiEngine] Falha ao inicializar GLAD!\n");
         glfwTerminate();
@@ -205,45 +190,36 @@ int tupi_janela_criar(int largura, int altura, const char* titulo) {
 
     glfwSetFramebufferSizeCallback(_janela, _callback_resize);
 
-    // Blending (transparência)
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-    // MSAA
     glEnable(GL_MULTISAMPLE);
 
-    // Compilar shaders
-    _shader = _criar_programa(_vert_src, _frag_src);
-
+    // Shader de formas 2D
+    _shader       = _criar_programa(_vert_src, _frag_src);
     _loc_projecao = glGetUniformLocation(_shader, "uProjecao");
     _loc_cor      = glGetUniformLocation(_shader, "uCor");
 
-    // Criar VAO e VBO
+    // VAO/VBO de formas 2D
     glGenVertexArrays(1, &_vao);
     glGenBuffers(1, &_vbo);
-
     glBindVertexArray(_vao);
     glBindBuffer(GL_ARRAY_BUFFER, _vbo);
-
-    // Aloca buffer para TUPI_MAX_VERTICES vértices (x, y)
     glBufferData(GL_ARRAY_BUFFER, sizeof(float) * 2 * TUPI_MAX_VERTICES, NULL, GL_DYNAMIC_DRAW);
-
-    // Atributo 0: vec2 aPos
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(float) * 2, (void*)0);
     glEnableVertexAttribArray(0);
-
     glBindVertexArray(0);
 
-    // Projeção ortográfica inicial
+    // Inicializa sistema de sprites (shader de textura + VAO próprio)
+    tupi_sprite_iniciar();
+
+    // Projeção inicial — envia para ambos os shaders
     _configurar_projecao(largura, altura);
 
     _tempo_anterior = glfwGetTime();
-
-    // Sistema de inputs
     tupi_input_iniciar(_janela);
 
     printf("[TupiEngine] Janela criada: %dx%d - '%s'\n", largura, altura, titulo);
-    printf("[TupiEngine] Bem-vindo a TupiEngine! Versao 0.2\n");
+    printf("[TupiEngine] Bem-vindo a TupiEngine! Versao 0.3\n");
 
     return 1;
 }
@@ -257,7 +233,6 @@ void tupi_janela_limpar(void) {
     double agora = glfwGetTime();
     _delta = agora - _tempo_anterior;
     _tempo_anterior = agora;
-
     glClearColor(_fundo_r, _fundo_g, _fundo_b, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
 }
@@ -270,22 +245,19 @@ void tupi_janela_atualizar(void) {
 }
 
 void tupi_janela_fechar(void) {
-    if (_shader) { glDeleteProgram(_shader); _shader = 0; }
-    if (_vbo)    { glDeleteBuffers(1, &_vbo); _vbo = 0; }
-    if (_vao)    { glDeleteVertexArrays(1, &_vao); _vao = 0; }
-
-    if (_janela) {
-        glfwDestroyWindow(_janela);
-        _janela = NULL;
-    }
+    tupi_sprite_encerrar();
+    if (_shader) { glDeleteProgram(_shader);         _shader = 0; }
+    if (_vbo)    { glDeleteBuffers(1, &_vbo);        _vbo    = 0; }
+    if (_vao)    { glDeleteVertexArrays(1, &_vao);   _vao    = 0; }
+    if (_janela) { glfwDestroyWindow(_janela);       _janela = NULL; }
     glfwTerminate();
     printf("[TupiEngine] Janela fechada. Ate mais!\n");
 }
 
-double tupi_tempo(void)      { return glfwGetTime(); }
-double tupi_delta_tempo(void){ return _delta; }
-int tupi_janela_largura(void){ return _largura; }
-int tupi_janela_altura(void) { return _altura;  }
+double tupi_tempo(void)       { return glfwGetTime(); }
+double tupi_delta_tempo(void) { return _delta;        }
+int tupi_janela_largura(void) { return _largura;      }
+int tupi_janela_altura(void)  { return _altura;       }
 
 // ============================================================
 // COR
@@ -304,32 +276,18 @@ void tupi_cor(float r, float g, float b, float a) {
 // ============================================================
 
 void tupi_retangulo(float x, float y, float largura, float altura) {
-    float v[8] = {
-        x,          y,
-        x + largura, y,
-        x + largura, y + altura,
-        x,           y + altura,
-    };
-    // GL_TRIANGLE_FAN: centro implícito no primeiro vértice
-    // Usamos dois triângulos via TRIANGLE_STRIP
-    float ts[12] = {
+    float ts[8] = {
         x,           y,
         x + largura,  y,
         x,            y + altura,
         x + largura,  y + altura,
     };
-    (void)v;
     _desenhar(GL_TRIANGLE_STRIP, ts, 4);
 }
 
 void tupi_retangulo_borda(float x, float y, float largura, float altura, float espessura) {
     glLineWidth(espessura);
-    float v[8] = {
-        x,           y,
-        x + largura,  y,
-        x + largura,  y + altura,
-        x,            y + altura,
-    };
+    float v[8] = { x, y, x+largura, y, x+largura, y+altura, x, y+altura };
     _desenhar(GL_LINE_LOOP, v, 4);
     glLineWidth(1.0f);
 }
@@ -340,38 +298,27 @@ void tupi_triangulo(float x1, float y1, float x2, float y2, float x3, float y3) 
 }
 
 void tupi_circulo(float x, float y, float raio, int segmentos) {
-    if (segmentos > TUPI_MAX_VERTICES - 2)
-        segmentos = TUPI_MAX_VERTICES - 2;
-
-    // TRIANGLE_FAN: primeiro vértice = centro
-    float verts[(TUPI_MAX_VERTICES) * 2];
+    if (segmentos > TUPI_MAX_VERTICES - 2) segmentos = TUPI_MAX_VERTICES - 2;
+    float verts[TUPI_MAX_VERTICES * 2];
     int n = 0;
-
-    verts[n++] = x;
-    verts[n++] = y;
-
+    verts[n++] = x; verts[n++] = y;
     for (int i = 0; i <= segmentos; i++) {
         float a = (float)i / (float)segmentos * 2.0f * (float)M_PI;
         verts[n++] = x + cosf(a) * raio;
         verts[n++] = y + sinf(a) * raio;
     }
-
     _desenhar(GL_TRIANGLE_FAN, verts, segmentos + 2);
 }
 
 void tupi_circulo_borda(float x, float y, float raio, int segmentos, float espessura) {
-    if (segmentos > TUPI_MAX_VERTICES)
-        segmentos = TUPI_MAX_VERTICES;
-
+    if (segmentos > TUPI_MAX_VERTICES) segmentos = TUPI_MAX_VERTICES;
     float verts[TUPI_MAX_VERTICES * 2];
     int n = 0;
-
     for (int i = 0; i < segmentos; i++) {
         float a = (float)i / (float)segmentos * 2.0f * (float)M_PI;
         verts[n++] = x + cosf(a) * raio;
         verts[n++] = y + sinf(a) * raio;
     }
-
     glLineWidth(espessura);
     _desenhar(GL_LINE_LOOP, verts, segmentos);
     glLineWidth(1.0f);
