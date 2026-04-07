@@ -1,16 +1,37 @@
 // RendererGL.c
 // TupiEngine - Implementação do Sistema de Renderização OpenGL
-// Usa OpenGL legado (imediato) para compatibilidade máxima com LuaJIT FFI
+// OpenGL 3.3 Core Profile — VAO/VBO + Shaders GLSL
 
 #include "RendererGL.h"
+#include "../Inputs/Inputs.h"
+
+// ============================================================
+// SHADERS GLSL
+// ============================================================
+
+static const char* _vert_src =
+    "#version 330 core\n"
+    "layout(location = 0) in vec2 aPos;\n"
+    "uniform mat4 uProjecao;\n"
+    "void main() {\n"
+    "    gl_Position = uProjecao * vec4(aPos, 0.0, 1.0);\n"
+    "}\n";
+
+static const char* _frag_src =
+    "#version 330 core\n"
+    "uniform vec4 uCor;\n"
+    "out vec4 FragColor;\n"
+    "void main() {\n"
+    "    FragColor = uCor;\n"
+    "}\n";
 
 // ============================================================
 // ESTADO INTERNO
 // ============================================================
 
-static GLFWwindow* _janela = NULL;
-static int _largura = 800;
-static int _altura  = 600;
+static GLFWwindow* _janela   = NULL;
+static int         _largura  = 800;
+static int         _altura   = 600;
 
 static float _fundo_r = 0.1f;
 static float _fundo_g = 0.1f;
@@ -22,7 +43,95 @@ static float _cor_b = 1.0f;
 static float _cor_a = 1.0f;
 
 static double _tempo_anterior = 0.0;
-static double _delta = 0.0;
+static double _delta          = 0.0;
+
+// Recursos OpenGL
+static GLuint _shader   = 0;
+static GLuint _vao      = 0;
+static GLuint _vbo      = 0;
+
+// Locations dos uniforms
+static GLint _loc_projecao = -1;
+static GLint _loc_cor      = -1;
+
+// Tamanho máximo de vértices por draw call (círculo com muitos segmentos)
+#define TUPI_MAX_VERTICES 1024
+
+// ============================================================
+// HELPERS DE SHADER
+// ============================================================
+
+static GLuint _compilar_shader(GLenum tipo, const char* src) {
+    GLuint s = glCreateShader(tipo);
+    glShaderSource(s, 1, &src, NULL);
+    glCompileShader(s);
+
+    GLint ok;
+    glGetShaderiv(s, GL_COMPILE_STATUS, &ok);
+    if (!ok) {
+        char log[512];
+        glGetShaderInfoLog(s, sizeof(log), NULL, log);
+        fprintf(stderr, "[TupiEngine] Erro no shader: %s\n", log);
+    }
+    return s;
+}
+
+static GLuint _criar_programa(const char* vert, const char* frag) {
+    GLuint vs = _compilar_shader(GL_VERTEX_SHADER,   vert);
+    GLuint fs = _compilar_shader(GL_FRAGMENT_SHADER, frag);
+
+    GLuint prog = glCreateProgram();
+    glAttachShader(prog, vs);
+    glAttachShader(prog, fs);
+    glLinkProgram(prog);
+
+    GLint ok;
+    glGetProgramiv(prog, GL_LINK_STATUS, &ok);
+    if (!ok) {
+        char log[512];
+        glGetProgramInfoLog(prog, sizeof(log), NULL, log);
+        fprintf(stderr, "[TupiEngine] Erro ao linkar programa: %s\n", log);
+    }
+
+    glDeleteShader(vs);
+    glDeleteShader(fs);
+    return prog;
+}
+
+// ============================================================
+// PROJEÇÃO ORTOGRÁFICA
+// Origem no canto superior esquerdo, Y cresce para baixo
+// ============================================================
+
+static void _atualizar_projecao(int largura, int altura) {
+    // Matriz ortográfica 4x4 (column-major para OpenGL)
+    // glOrtho(0, largura, altura, 0, -1, 1)
+    float L = 0.0f, R = (float)largura;
+    float T = 0.0f, B = (float)altura;
+    float N = -1.0f, F = 1.0f;
+
+    float proj[16] = {
+        2.0f/(R-L),    0.0f,          0.0f,         0.0f,
+        0.0f,          2.0f/(T-B),    0.0f,         0.0f,
+        0.0f,          0.0f,         -2.0f/(F-N),   0.0f,
+        -(R+L)/(R-L), -(T+B)/(T-B), -(F+N)/(F-N),  1.0f
+    };
+
+    glUseProgram(_shader);
+    glUniformMatrix4fv(_loc_projecao, 1, GL_FALSE, proj);
+}
+
+static void _configurar_projecao(int largura, int altura) {
+    glViewport(0, 0, largura, altura);
+    _atualizar_projecao(largura, altura);
+}
+
+static void _callback_resize(GLFWwindow* janela, int largura, int altura) {
+    (void)janela;
+    _largura = largura;
+    _altura  = altura;
+    _configurar_projecao(largura, altura);
+}
 
 // ============================================================
 // CALLBACK DE ERRO DO GLFW
@@ -33,24 +142,21 @@ static void _erro_glfw(int codigo, const char* descricao) {
 }
 
 // ============================================================
-// PROJEÇÃO ORTOGRÁFICA (pixels = coordenadas de tela)
+// DRAW CALL GENÉRICO
+// Envia vértices para o VBO e desenha com o modo especificado
 // ============================================================
 
-static void _configurar_projecao(int largura, int altura) {
-    glViewport(0, 0, largura, altura);
-    glMatrixMode(GL_PROJECTION);
-    glLoadIdentity();
-    // Origem no canto superior esquerdo, Y cresce para baixo (padrão de tela)
-    glOrtho(0.0, (double)largura, (double)altura, 0.0, -1.0, 1.0);
-    glMatrixMode(GL_MODELVIEW);
-    glLoadIdentity();
-}
+static void _desenhar(GLenum modo, float* verts, int n) {
+    glBindVertexArray(_vao);
+    glBindBuffer(GL_ARRAY_BUFFER, _vbo);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(float) * 2 * n, verts);
 
-static void _callback_resize(GLFWwindow* janela, int largura, int altura) {
-    (void)janela;
-    _largura = largura;
-    _altura  = altura;
-    _configurar_projecao(largura, altura);
+    glUseProgram(_shader);
+    glUniform4f(_loc_cor, _cor_r, _cor_g, _cor_b, _cor_a);
+
+    glDrawArrays(modo, 0, n);
+
+    glBindVertexArray(0);
 }
 
 // ============================================================
@@ -65,10 +171,15 @@ int tupi_janela_criar(int largura, int altura, const char* titulo) {
         return 0;
     }
 
-    // Janela compatível com OpenGL 2.1 (legado, funciona com glBegin/glEnd)
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
-    glfwWindowHint(GLFW_SAMPLES, 4); // Anti-aliasing 4x
+    // OpenGL 3.3 Core Profile
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    glfwWindowHint(GLFW_SAMPLES, 4); // MSAA 4x
+
+#ifdef __APPLE__
+    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+#endif
 
     _janela = glfwCreateWindow(largura, altura, titulo, NULL, NULL);
     if (!_janela) {
@@ -81,26 +192,58 @@ int tupi_janela_criar(int largura, int altura, const char* titulo) {
     _altura  = altura;
 
     glfwMakeContextCurrent(_janela);
-    glfwSwapInterval(1); // VSync ligado
+    glfwSwapInterval(1); // VSync
+
+    // Carregar funções OpenGL via GLAD
+    if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
+        fprintf(stderr, "[TupiEngine] Falha ao inicializar GLAD!\n");
+        glfwTerminate();
+        return 0;
+    }
+
+    printf("[TupiEngine] OpenGL %s\n", glGetString(GL_VERSION));
 
     glfwSetFramebufferSizeCallback(_janela, _callback_resize);
 
-    // Habilitar blending (transparência)
+    // Blending (transparência)
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-    // Anti-aliasing para linhas e pontos
-    glEnable(GL_LINE_SMOOTH);
-    glEnable(GL_POINT_SMOOTH);
-    glHint(GL_LINE_SMOOTH_HINT, GL_NICEST);
+    // MSAA
+    glEnable(GL_MULTISAMPLE);
 
-    // Configurar projeção ortográfica inicial
+    // Compilar shaders
+    _shader = _criar_programa(_vert_src, _frag_src);
+
+    _loc_projecao = glGetUniformLocation(_shader, "uProjecao");
+    _loc_cor      = glGetUniformLocation(_shader, "uCor");
+
+    // Criar VAO e VBO
+    glGenVertexArrays(1, &_vao);
+    glGenBuffers(1, &_vbo);
+
+    glBindVertexArray(_vao);
+    glBindBuffer(GL_ARRAY_BUFFER, _vbo);
+
+    // Aloca buffer para TUPI_MAX_VERTICES vértices (x, y)
+    glBufferData(GL_ARRAY_BUFFER, sizeof(float) * 2 * TUPI_MAX_VERTICES, NULL, GL_DYNAMIC_DRAW);
+
+    // Atributo 0: vec2 aPos
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(float) * 2, (void*)0);
+    glEnableVertexAttribArray(0);
+
+    glBindVertexArray(0);
+
+    // Projeção ortográfica inicial
     _configurar_projecao(largura, altura);
 
     _tempo_anterior = glfwGetTime();
 
+    // Sistema de inputs
+    tupi_input_iniciar(_janela);
+
     printf("[TupiEngine] Janela criada: %dx%d - '%s'\n", largura, altura, titulo);
-    printf("[TupiEngine] Bem-vindo a TupiEngine! Versao 0.1\n");
+    printf("[TupiEngine] Bem-vindo a TupiEngine! Versao 0.2\n");
 
     return 1;
 }
@@ -111,23 +254,26 @@ int tupi_janela_aberta(void) {
 }
 
 void tupi_janela_limpar(void) {
-    // Calcular delta time
     double agora = glfwGetTime();
     _delta = agora - _tempo_anterior;
     _tempo_anterior = agora;
 
     glClearColor(_fundo_r, _fundo_g, _fundo_b, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
-
-    glLoadIdentity();
 }
 
 void tupi_janela_atualizar(void) {
     glfwSwapBuffers(_janela);
+    tupi_input_salvar_estado();
     glfwPollEvents();
+    tupi_input_atualizar_mouse();
 }
 
 void tupi_janela_fechar(void) {
+    if (_shader) { glDeleteProgram(_shader); _shader = 0; }
+    if (_vbo)    { glDeleteBuffers(1, &_vbo); _vbo = 0; }
+    if (_vao)    { glDeleteVertexArrays(1, &_vao); _vao = 0; }
+
     if (_janela) {
         glfwDestroyWindow(_janela);
         _janela = NULL;
@@ -136,33 +282,21 @@ void tupi_janela_fechar(void) {
     printf("[TupiEngine] Janela fechada. Ate mais!\n");
 }
 
-double tupi_tempo(void) {
-    return glfwGetTime();
-}
-
-double tupi_delta_tempo(void) {
-    return _delta;
-}
-
-int tupi_janela_largura(void) { return _largura; }
-int tupi_janela_altura(void)  { return _altura;  }
+double tupi_tempo(void)      { return glfwGetTime(); }
+double tupi_delta_tempo(void){ return _delta; }
+int tupi_janela_largura(void){ return _largura; }
+int tupi_janela_altura(void) { return _altura;  }
 
 // ============================================================
 // COR
 // ============================================================
 
 void tupi_cor_fundo(float r, float g, float b) {
-    _fundo_r = r;
-    _fundo_g = g;
-    _fundo_b = b;
+    _fundo_r = r; _fundo_g = g; _fundo_b = b;
 }
 
 void tupi_cor(float r, float g, float b, float a) {
-    _cor_r = r;
-    _cor_g = g;
-    _cor_b = b;
-    _cor_a = a;
-    glColor4f(r, g, b, a);
+    _cor_r = r; _cor_g = g; _cor_b = b; _cor_a = a;
 }
 
 // ============================================================
@@ -170,65 +304,82 @@ void tupi_cor(float r, float g, float b, float a) {
 // ============================================================
 
 void tupi_retangulo(float x, float y, float largura, float altura) {
-    glColor4f(_cor_r, _cor_g, _cor_b, _cor_a);
-    glBegin(GL_QUADS);
-        glVertex2f(x,          y);
-        glVertex2f(x + largura, y);
-        glVertex2f(x + largura, y + altura);
-        glVertex2f(x,          y + altura);
-    glEnd();
+    float v[8] = {
+        x,          y,
+        x + largura, y,
+        x + largura, y + altura,
+        x,           y + altura,
+    };
+    // GL_TRIANGLE_FAN: centro implícito no primeiro vértice
+    // Usamos dois triângulos via TRIANGLE_STRIP
+    float ts[12] = {
+        x,           y,
+        x + largura,  y,
+        x,            y + altura,
+        x + largura,  y + altura,
+    };
+    (void)v;
+    _desenhar(GL_TRIANGLE_STRIP, ts, 4);
 }
 
 void tupi_retangulo_borda(float x, float y, float largura, float altura, float espessura) {
-    glColor4f(_cor_r, _cor_g, _cor_b, _cor_a);
     glLineWidth(espessura);
-    glBegin(GL_LINE_LOOP);
-        glVertex2f(x,           y);
-        glVertex2f(x + largura,  y);
-        glVertex2f(x + largura,  y + altura);
-        glVertex2f(x,            y + altura);
-    glEnd();
+    float v[8] = {
+        x,           y,
+        x + largura,  y,
+        x + largura,  y + altura,
+        x,            y + altura,
+    };
+    _desenhar(GL_LINE_LOOP, v, 4);
     glLineWidth(1.0f);
 }
 
 void tupi_triangulo(float x1, float y1, float x2, float y2, float x3, float y3) {
-    glColor4f(_cor_r, _cor_g, _cor_b, _cor_a);
-    glBegin(GL_TRIANGLES);
-        glVertex2f(x1, y1);
-        glVertex2f(x2, y2);
-        glVertex2f(x3, y3);
-    glEnd();
+    float v[6] = { x1, y1, x2, y2, x3, y3 };
+    _desenhar(GL_TRIANGLES, v, 3);
 }
 
 void tupi_circulo(float x, float y, float raio, int segmentos) {
-    glColor4f(_cor_r, _cor_g, _cor_b, _cor_a);
-    glBegin(GL_TRIANGLE_FAN);
-        glVertex2f(x, y); // Centro
-        for (int i = 0; i <= segmentos; i++) {
-            float angulo = (float)i / (float)segmentos * 2.0f * (float)M_PI;
-            glVertex2f(x + cosf(angulo) * raio, y + sinf(angulo) * raio);
-        }
-    glEnd();
+    if (segmentos > TUPI_MAX_VERTICES - 2)
+        segmentos = TUPI_MAX_VERTICES - 2;
+
+    // TRIANGLE_FAN: primeiro vértice = centro
+    float verts[(TUPI_MAX_VERTICES) * 2];
+    int n = 0;
+
+    verts[n++] = x;
+    verts[n++] = y;
+
+    for (int i = 0; i <= segmentos; i++) {
+        float a = (float)i / (float)segmentos * 2.0f * (float)M_PI;
+        verts[n++] = x + cosf(a) * raio;
+        verts[n++] = y + sinf(a) * raio;
+    }
+
+    _desenhar(GL_TRIANGLE_FAN, verts, segmentos + 2);
 }
 
 void tupi_circulo_borda(float x, float y, float raio, int segmentos, float espessura) {
-    glColor4f(_cor_r, _cor_g, _cor_b, _cor_a);
+    if (segmentos > TUPI_MAX_VERTICES)
+        segmentos = TUPI_MAX_VERTICES;
+
+    float verts[TUPI_MAX_VERTICES * 2];
+    int n = 0;
+
+    for (int i = 0; i < segmentos; i++) {
+        float a = (float)i / (float)segmentos * 2.0f * (float)M_PI;
+        verts[n++] = x + cosf(a) * raio;
+        verts[n++] = y + sinf(a) * raio;
+    }
+
     glLineWidth(espessura);
-    glBegin(GL_LINE_LOOP);
-        for (int i = 0; i < segmentos; i++) {
-            float angulo = (float)i / (float)segmentos * 2.0f * (float)M_PI;
-            glVertex2f(x + cosf(angulo) * raio, y + sinf(angulo) * raio);
-        }
-    glEnd();
+    _desenhar(GL_LINE_LOOP, verts, segmentos);
     glLineWidth(1.0f);
 }
 
 void tupi_linha(float x1, float y1, float x2, float y2, float espessura) {
-    glColor4f(_cor_r, _cor_g, _cor_b, _cor_a);
+    float v[4] = { x1, y1, x2, y2 };
     glLineWidth(espessura);
-    glBegin(GL_LINES);
-        glVertex2f(x1, y1);
-        glVertex2f(x2, y2);
-    glEnd();
+    _desenhar(GL_LINES, v, 2);
     glLineWidth(1.0f);
 }

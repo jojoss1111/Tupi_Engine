@@ -1,4 +1,3 @@
---Arquivo de cabesario para o arquivo TupiEngine.lua
 -- engineffi.lua
 -- TupiEngine - Declarações FFI para o LuaJIT
 -- Liga o Lua com as funções C do RendererGL
@@ -34,6 +33,34 @@ ffi.cdef[[
     void tupi_circulo(float x, float y, float raio, int segmentos);
     void tupi_circulo_borda(float x, float y, float raio, int segmentos, float espessura);
     void tupi_linha(float x1, float y1, float x2, float y2, float espessura);
+
+    /* ============================
+       TECLADO
+    ============================ */
+    int tupi_tecla_pressionou(int tecla);
+    int tupi_tecla_segurando(int tecla);
+    int tupi_tecla_soltou(int tecla);
+
+    /* ============================
+       MOUSE - POSIÇÃO
+    ============================ */
+    double tupi_mouse_x(void);
+    double tupi_mouse_y(void);
+    double tupi_mouse_dx(void);
+    double tupi_mouse_dy(void);
+
+    /* ============================
+       MOUSE - BOTÕES
+    ============================ */
+    int tupi_mouse_clicou(int botao);
+    int tupi_mouse_segurando(int botao);
+    int tupi_mouse_soltou(int botao);
+
+    /* ============================
+       SCROLL
+    ============================ */
+    double tupi_scroll_x(void);
+    double tupi_scroll_y(void);
 ]]
 
 -- Carrega a biblioteca compartilhada compilada
