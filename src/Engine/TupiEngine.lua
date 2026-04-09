@@ -609,4 +609,215 @@ function Tupi.camera.mouseMundo()
     return Tupi.camera.telaMundo(Tupi.mouseX(), Tupi.mouseY())
 end
 
+-- ============================================================
+-- FÍSICA 2D
+-- ============================================================
+
+Tupi.fisica = {}
+
+--- Cria um corpo físico dinâmico (se move, é afetado pela gravidade).
+--
+-- @param x             posição X inicial
+-- @param y             posição Y inicial
+-- @param massa         massa (kg) — valores típicos: 1.0 a 100.0
+-- @param elasticidade  quão elástico é o choque — 0.0 (para) a 1.0 (ricochete perfeito)
+-- @param atrito        fator de atrito por segundo — 0.0 (desliza) a 1.0 (para rápido)
+-- @return              cdata TupiCorpo[1]
+--
+-- Exemplo:
+--   local jogador = Tupi.fisica.corpo(100, 200, 5.0, 0.2, 0.8)
+--
+function Tupi.fisica.corpo(x, y, massa, elasticidade, atrito)
+    local c = ffi.new("TupiCorpo[1]")
+    c[0].x            = x            or 0
+    c[0].y            = y            or 0
+    c[0].velX         = 0
+    c[0].velY         = 0
+    c[0].aceleracaoX  = 0
+    c[0].aceleracaoY  = 0
+    c[0].massa        = massa        or 1.0
+    c[0].elasticidade = elasticidade or 0.3
+    c[0].atrito       = atrito       or 0.1
+    return c
+end
+
+--- Cria um corpo estático (paredes, chão, plataformas).
+-- Massa = 0 — nunca se move, só serve de obstáculo.
+--
+-- @param x  posição X
+-- @param y  posição Y
+-- @return   cdata TupiCorpo[1]
+--
+-- Exemplo:
+--   local chao = Tupi.fisica.corpoEstatico(0, 550)
+--
+function Tupi.fisica.corpoEstatico(x, y)
+    local c = ffi.new("TupiCorpo[1]")
+    c[0].x            = x or 0
+    c[0].y            = y or 0
+    c[0].velX         = 0
+    c[0].velY         = 0
+    c[0].aceleracaoX  = 0
+    c[0].aceleracaoY  = 0
+    c[0].massa        = 0.0  -- sinaliza "estático" para o C
+    c[0].elasticidade = 0.0
+    c[0].atrito       = 1.0
+    return c
+end
+
+--- Avança a simulação do corpo por um passo de tempo.
+-- Deve ser chamado uma vez por frame, dentro do loop principal.
+--
+-- @param corpo     cdata TupiCorpo[1]
+-- @param gravidade aceleração gravitacional em px/s² (padrão 500.0, use 0 para sem gravidade)
+--
+-- Exemplo:
+--   Tupi.fisica.atualizar(jogador, 500)
+--
+function Tupi.fisica.atualizar(corpo, gravidade)
+    C.tupi_fisica_atualizar(corpo, Tupi.dt(), gravidade or 500.0)
+end
+
+--- Aplica um impulso instantâneo ao corpo (ex: pulo, explosão, knockback).
+-- O impulso é dividido pela massa — corpos mais pesados reagem menos.
+--
+-- @param corpo  cdata TupiCorpo[1]
+-- @param fx     força horizontal (positivo = direita)
+-- @param fy     força vertical   (positivo = baixo, pois Y cresce pra baixo)
+--
+-- Exemplo — pulo:
+--   Tupi.fisica.impulso(jogador, 0, -3000)
+--
+function Tupi.fisica.impulso(corpo, fx, fy)
+    C.tupi_fisica_impulso(corpo, fx or 0, fy or 0)
+end
+
+--- Retorna o retângulo de colisão centrado na posição do corpo.
+-- Use junto com Tupi.col.retRet / retRetInfo para detectar colisões.
+--
+-- @param corpo   cdata TupiCorpo[1]
+-- @param largura largura do retângulo em pixels
+-- @param altura  altura do retângulo em pixels
+-- @return        tabela { x, y, largura, altura }
+--
+-- Exemplo:
+--   local hb = Tupi.fisica.retCol(jogador, 32, 48)
+--   if Tupi.col.retRet(hb, paredeHb) then ... end
+--
+function Tupi.fisica.retCol(corpo, largura, altura)
+    local r = C.tupi_corpo_ret(corpo, largura or 0, altura or 0)
+    return { x = tonumber(r.x), y = tonumber(r.y),
+             largura = tonumber(r.largura), altura = tonumber(r.altura) }
+end
+
+--- Retorna o círculo de colisão centrado na posição do corpo.
+--
+-- @param corpo  cdata TupiCorpo[1]
+-- @param raio   raio em pixels
+-- @return       tabela { x, y, raio }
+--
+function Tupi.fisica.cirCol(corpo, raio)
+    local c = C.tupi_corpo_cir(corpo, raio or 0)
+    return { x = tonumber(c.x), y = tonumber(c.y), raio = tonumber(c.raio) }
+end
+
+--- Resolve colisão entre dois corpos dinâmicos.
+-- Separa os corpos e aplica resposta de velocidade proporcional às massas.
+--
+-- @param a     cdata TupiCorpo[1] — primeiro corpo
+-- @param b     cdata TupiCorpo[1] — segundo corpo
+-- @param info  tabela { colidindo, dx, dy } retornada por Tupi.col.*Info()
+--
+-- Exemplo:
+--   local info = Tupi.col.retRetInfo(hbA, hbB)
+--   if info.colidindo then
+--       Tupi.fisica.resolverColisao(corpoA, corpoB, info)
+--   end
+--
+function Tupi.fisica.resolverColisao(a, b, info)
+    local c = ffi.new("TupiColisao",
+        info.colidindo and 1 or 0,
+        info.dx or 0,
+        info.dy or 0)
+    C.tupi_resolver_colisao(a, b, c)
+end
+
+--- Resolve colisão entre um corpo dinâmico e um obstáculo estático.
+-- Empurra o corpo para fora e inverte a velocidade com elasticidade.
+--
+-- @param corpo  cdata TupiCorpo[1] — o corpo que se move
+-- @param info   tabela { colidindo, dx, dy }
+--
+-- Exemplo — colisão com o chão:
+--   local info = Tupi.col.retRetInfo(hbJogador, hbChao)
+--   if info.colidindo then
+--       Tupi.fisica.resolverEstatico(jogador, info)
+--   end
+--
+function Tupi.fisica.resolverEstatico(corpo, info)
+    local c = ffi.new("TupiColisao",
+        info.colidindo and 1 or 0,
+        info.dx or 0,
+        info.dy or 0)
+    C.tupi_resolver_estatico(corpo, c)
+end
+
+--- Aplica atrito ao corpo, reduzindo a velocidade gradualmente.
+-- Chame uma vez por frame após atualizar().
+--
+-- @param corpo  cdata TupiCorpo[1]
+--
+function Tupi.fisica.atrito(corpo)
+    C.tupi_aplicar_atrito(corpo, Tupi.dt())
+end
+
+--- Limita a velocidade máxima do corpo.
+-- Útil para evitar que o personagem acelere infinitamente.
+--
+-- @param corpo   cdata TupiCorpo[1]
+-- @param maxVel  velocidade máxima em px/s (padrão 800)
+--
+function Tupi.fisica.limitarVel(corpo, maxVel)
+    C.tupi_limitar_velocidade(corpo, maxVel or 800.0)
+end
+
+--- Atalhos de leitura — evitam acessar cdata[0] diretamente no jogo.
+
+--- Retorna a posição atual do corpo (x, y).
+function Tupi.fisica.pos(corpo)
+    return tonumber(corpo[0].x), tonumber(corpo[0].y)
+end
+
+--- Retorna a velocidade atual do corpo (vx, vy).
+function Tupi.fisica.vel(corpo)
+    return tonumber(corpo[0].velX), tonumber(corpo[0].velY)
+end
+
+--- Define a posição do corpo diretamente (teleporte físico).
+function Tupi.fisica.setPosicao(corpo, x, y)
+    corpo[0].x = x or corpo[0].x
+    corpo[0].y = y or corpo[0].y
+end
+
+--- Define a velocidade do corpo diretamente.
+function Tupi.fisica.setVel(corpo, vx, vy)
+    corpo[0].velX = vx or 0
+    corpo[0].velY = vy or 0
+end
+
+--- Sincroniza a posição de um TupiObjeto com o seu TupiCorpo.
+-- Chame depois de atualizar() para que o sprite siga a física.
+--
+-- @param objeto  cdata TupiObjeto[1]
+-- @param corpo   cdata TupiCorpo[1]
+--
+-- Exemplo:
+--   Tupi.fisica.atualizar(corpo, 500)
+--   Tupi.fisica.sincronizar(objeto, corpo)
+--
+function Tupi.fisica.sincronizar(objeto, corpo)
+    objeto[0].x = corpo[0].x
+    objeto[0].y = corpo[0].y
+end
+
 return Tupi

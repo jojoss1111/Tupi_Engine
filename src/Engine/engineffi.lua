@@ -1,6 +1,6 @@
 -- engineffi.lua
 -- TupiEngine - Declarações FFI para o LuaJIT
--- Liga o Lua com as funções C do RendererGL, ColisoesAABB, Sprites e Câmera
+-- Liga o Lua com as funções C do RendererGL, ColisoesAABB, Sprites, Câmera e Física
 
 local ffi = require("ffi")
 
@@ -151,6 +151,41 @@ ffi.cdef[[
 
     void  tupi_camera_tela_mundo_lua(float sx, float sy, float* wx, float* wy);
     void  tupi_camera_mundo_tela_lua(float wx, float wy, float* sx, float* sy);
+
+    /* ============================
+       FÍSICA
+       Espelha Fisica.h + ColisoesAABB.h
+    ============================ */
+
+    // TupiCorpo — corpo rígido 2D
+    // massa == 0.0 → estático (paredes, chão, plataformas)
+    typedef struct {
+        float x, y;
+        float velX, velY;
+        float aceleracaoX, aceleracaoY;
+        float massa;
+        float elasticidade;   // 0.0 (inelástico) a 1.0 (perfeitamente elástico)
+        float atrito;         // 0.0 (sem atrito) a 1.0 (para imediatamente)
+    } TupiCorpo;
+
+    // Construtores inline não são exportados pelo C — criamos aqui via ffi.new()
+    // Veja Tupi.fisica.corpo() e Tupi.fisica.corpoEstatico() no TupiEngine.lua
+
+    // Movimento
+    void tupi_fisica_atualizar(TupiCorpo* c, float dt, float gravidade);
+    void tupi_fisica_impulso  (TupiCorpo* c, float fx, float fy);
+
+    // Helpers de forma — retornam o colisor centrado no corpo
+    TupiRetCol  tupi_corpo_ret(TupiCorpo* c, float largura, float altura);
+    TupiCircCol tupi_corpo_cir(TupiCorpo* c, float raio);
+
+    // Resolução de colisão
+    void tupi_resolver_colisao (TupiCorpo* a, TupiCorpo* b, TupiColisao info);
+    void tupi_resolver_estatico(TupiCorpo* a, TupiColisao info);
+
+    // Utilitários
+    void tupi_aplicar_atrito      (TupiCorpo* c, float dt);
+    void tupi_limitar_velocidade  (TupiCorpo* c, float maxVel);
 ]]
 
 local tupiC = ffi.load("./libtupi.so")
