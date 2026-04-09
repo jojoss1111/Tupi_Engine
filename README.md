@@ -26,10 +26,9 @@ Uma engine de jogos 2D brasileira, desenvolvida em C com scripting em Lua, focad
   - [Hitbox](#hitbox)
   - [Câmera 2D](#câmera-2d)
   - [Utilitários Matemáticos](#utilitários-matemáticos)
+  - [Física 2D](#física-2d)
 - [Constantes](#constantes)
 - [Exemplos Completos](#exemplos-completos)
-- [Licença](#licença)
-
 ---
 
 ## Sobre o Projeto
@@ -196,7 +195,6 @@ Tupi.fechar()
 ```
 
 ## API de Referência
-
 
 ### Janela
 
@@ -1122,6 +1120,252 @@ local d = Tupi.distancia(0, 0, 300, 400)  -- resultado: 500
 
 ---
 
+### Física 2D
+
+O sistema de física da Tupi Engine é implementado em C (`Fisica.c`) e exposto ao Lua através de `Tupi.fisica`. Ele simula corpos rígidos 2D com gravidade, impulsos, atrito e resolução de colisões, integrando-se diretamente com o sistema de colisões AABB já existente.
+
+Toda a simulação é baseada em **delta time real** — os corpos se movem de forma consistente independentemente da taxa de quadros.
+
+---
+
+### Conceitos
+
+**Corpo dinâmico** — tem massa, é afetado pela gravidade e responde a impulsos. É o tipo usado para o jogador, inimigos e projéteis.
+
+**Corpo estático** — tem massa `0`, nunca se move. É o tipo usado para chão, paredes e plataformas. O sistema de resolução de colisão respeita essa distinção automaticamente.
+
+**Elasticidade** — controla o quanto da velocidade é conservada após uma colisão. `0.0` significa que o corpo para completamente ao colidir; `1.0` significa ricochete perfeito sem perda de energia.
+
+**Atrito** — fator de desaceleração por segundo. `0.0` significa que o corpo desliza sem parar; `1.0` significa que o corpo desacelera rapidamente.
+
+---
+
+### Fluxo por frame
+
+O fluxo recomendado dentro do loop principal é:
+
+```
+1. Aplicar impulsos (pulo, knockback, etc.)
+2. Atualizar física (gravidade + integração de velocidade)
+3. Detectar colisões com Tupi.col.*Info()
+4. Resolver colisões com Tupi.fisica.resolver*()
+5. Sincronizar o sprite com o corpo
+6. Desenhar
+```
+
+---
+
+### `Tupi.fisica.corpo(x, y, massa, elasticidade, atrito)`
+
+Cria um corpo dinâmico na posição `(x, y)`.
+
+- `massa` — inércia do corpo. Valores típicos entre `1.0` e `100.0`. Corpos mais pesados reagem menos a impulsos.
+- `elasticidade` — `0.0` a `1.0`. Controla o ricochete nas colisões.
+- `atrito` — `0.0` a `1.0`. Controla a desaceleração passiva por frame.
+
+```lua
+local jogador = Tupi.fisica.corpo(100, 200, 5.0, 0.2, 0.8)
+```
+
+---
+
+### `Tupi.fisica.corpoEstatico(x, y)`
+
+Cria um corpo estático (massa `0`) que serve como obstáculo imóvel.
+
+```lua
+local chao = Tupi.fisica.corpoEstatico(0, 550)
+```
+
+---
+
+### `Tupi.fisica.atualizar(corpo, gravidade)`
+
+Avança a simulação do corpo por um passo de tempo. Aplica gravidade, integra a velocidade e atualiza a posição. Deve ser chamada uma vez por frame para cada corpo dinâmico.
+
+- `gravidade` — aceleração em px/s² (padrão `500.0`). Use `0` para corpos que não devem cair, como projéteis horizontais ou naves.
+
+```lua
+Tupi.fisica.atualizar(jogador, 500)
+```
+
+---
+
+### `Tupi.fisica.impulso(corpo, fx, fy)`
+
+Aplica um impulso instantâneo ao corpo. A força é dividida pela massa — corpos mais pesados reagem menos. Use para pulos, explosões e knockback.
+
+- `fy` negativo empurra para **cima** (pois Y cresce para baixo na engine).
+
+```lua
+-- Pulo
+if Tupi.teclaPressionou(Tupi.TECLA_ESPACO) then
+    Tupi.fisica.impulso(jogador, 0, -3000)
+end
+```
+
+---
+
+### `Tupi.fisica.retCol(corpo, largura, altura)` / `Tupi.fisica.cirCol(corpo, raio)`
+
+Retorna o colisor centrado na posição atual do corpo, pronto para ser passado para `Tupi.col.*`. Elimina a necessidade de calcular manualmente a posição da hitbox.
+
+```lua
+local hbJogador = Tupi.fisica.retCol(jogador, 32, 48)
+local hbChao    = Tupi.fisica.retCol(chao, 800, 20)
+```
+
+---
+
+### `Tupi.fisica.resolverEstatico(corpo, info)`
+
+Resolve a colisão de um corpo dinâmico contra um obstáculo estático. Empurra o corpo para fora usando o vetor de separação mínima e inverte a componente de velocidade relevante com a elasticidade do corpo.
+
+```lua
+local info = Tupi.col.retRetInfo(hbJogador, hbChao)
+if info.colidindo then
+    Tupi.fisica.resolverEstatico(jogador, info)
+end
+```
+
+---
+
+### `Tupi.fisica.resolverColisao(a, b, info)`
+
+Resolve a colisão entre dois corpos dinâmicos. A separação e a resposta de velocidade são distribuídas proporcionalmente às massas dos dois corpos.
+
+```lua
+local info = Tupi.col.retRetInfo(hbA, hbB)
+if info.colidindo then
+    Tupi.fisica.resolverColisao(corpoA, corpoB, info)
+end
+```
+
+---
+
+### `Tupi.fisica.atrito(corpo)`
+
+Aplica desaceleração passiva ao corpo com base no seu fator de atrito e no delta time atual. Chame após `atualizar()` para simular superfícies com resistência.
+
+```lua
+Tupi.fisica.atrito(jogador)
+```
+
+---
+
+### `Tupi.fisica.limitarVel(corpo, maxVel)`
+
+Limita a magnitude da velocidade do corpo ao valor máximo dado. Evita que o personagem acelere indefinidamente.
+
+```lua
+Tupi.fisica.limitarVel(jogador, 600)
+```
+
+---
+
+### Leitura e escrita de estado
+
+| Função | Descrição |
+|---|---|
+| `Tupi.fisica.pos(corpo)` | Retorna `x, y` da posição atual |
+| `Tupi.fisica.vel(corpo)` | Retorna `vx, vy` da velocidade atual |
+| `Tupi.fisica.setPosicao(corpo, x, y)` | Teleporta o corpo para `(x, y)` sem alterar a velocidade |
+| `Tupi.fisica.setVel(corpo, vx, vy)` | Define a velocidade diretamente |
+
+---
+
+### `Tupi.fisica.sincronizar(objeto, corpo)`
+
+Copia a posição do `TupiCorpo` para o `TupiObjeto` correspondente, fazendo o sprite seguir a simulação física. Deve ser chamada após `atualizar()` e antes de desenhar.
+
+```lua
+Tupi.fisica.atualizar(corpo, 500)
+Tupi.fisica.sincronizar(objeto, corpo)
+```
+
+---
+
+### Exemplo completo — plataformer com gravidade
+
+```lua
+local Tupi = require("src.Engine.TupiEngine")
+
+Tupi.janela(800, 600, "Física")
+Tupi.corFundo(0.08, 0.08, 0.12)
+
+local spr     = Tupi.carregarSprite("assets/jogador.png")
+local objeto  = Tupi.criarObjeto(100, 100, 32, 48, 0, 0, 1.0, 1.0, spr)
+local jogador = Tupi.fisica.corpo(100, 100, 5.0, 0.1, 0.5)
+
+-- Corpos estáticos — chão e duas plataformas
+local chao      = Tupi.fisica.corpoEstatico(0,   560)
+local plat1     = Tupi.fisica.corpoEstatico(200, 420)
+local plat2     = Tupi.fisica.corpoEstatico(480, 320)
+
+local noChao    = false
+local velHoriz  = 280
+
+while Tupi.rodando() do
+    Tupi.limpar()
+
+    -- Movimento horizontal via impulso suave
+    if Tupi.teclaSegurando(Tupi.TECLA_A) then
+        Tupi.fisica.impulso(jogador, -velHoriz, 0)
+    end
+    if Tupi.teclaSegurando(Tupi.TECLA_D) then
+        Tupi.fisica.impulso(jogador,  velHoriz, 0)
+    end
+
+    -- Pulo — só permitido se estiver apoiado
+    if Tupi.teclaPressionou(Tupi.TECLA_ESPACO) and noChao then
+        Tupi.fisica.impulso(jogador, 0, -3200)
+        noChao = false
+    end
+
+    -- Simula física com gravidade de 600 px/s²
+    Tupi.fisica.atualizar(jogador, 600)
+    Tupi.fisica.atrito(jogador)
+    Tupi.fisica.limitarVel(jogador, 700)
+
+    -- Hitbox do jogador
+    local hbJ = Tupi.fisica.retCol(jogador, 32, 48)
+
+    -- Resolve colisão com cada superfície
+    local function resolverSuperficie(corpo, larg, alt)
+        local hb   = Tupi.fisica.retCol(corpo, larg, alt)
+        local info = Tupi.col.retRetInfo(hbJ, hb)
+        if info.colidindo then
+            Tupi.fisica.resolverEstatico(jogador, info)
+            hbJ = Tupi.fisica.retCol(jogador, 32, 48)  -- atualiza após separação
+            if info.dy < 0 then noChao = true end       -- colidiu por baixo = chão
+        end
+    end
+
+    resolverSuperficie(chao,  800, 40)
+    resolverSuperficie(plat1, 160, 20)
+    resolverSuperficie(plat2, 160, 20)
+
+    -- Sincroniza o sprite e desenha
+    Tupi.fisica.sincronizar(objeto, jogador)
+    Tupi.enviarBatch(objeto, 0)
+
+    -- Desenha as plataformas
+    local cx, cy = Tupi.fisica.pos(chao)
+    local p1x, p1y = Tupi.fisica.pos(plat1)
+    local p2x, p2y = Tupi.fisica.pos(plat2)
+    Tupi.retangulo(cx,  cy,  800, 40, Tupi.CINZA)
+    Tupi.retangulo(p1x, p1y, 160, 20, Tupi.CINZA)
+    Tupi.retangulo(p2x, p2y, 160, 20, Tupi.CINZA)
+
+    Tupi.batchDesenhar()
+    Tupi.camera.seguir(Tupi.fisica.pos(jogador))
+    Tupi.atualizar()
+end
+
+Tupi.destruirSprite(spr)
+Tupi.fechar()
+```
+
 ## Constantes
 
 ### Teclas especiais
@@ -1316,10 +1560,3 @@ Tupi.fechar()
 
 ---
 
-## Licença
-
-Este projeto está licenciado sob a [MIT License](LICENSE).
-
----
-
-Desenvolvido com dedicação por um programador brasileiro.
