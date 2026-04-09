@@ -10,12 +10,14 @@ CARGO     = cargo
 # Diretórios
 SRC_DIR      = src/Renderizador
 CAMERA_DIR   = src/Camera
+FISICA_DIR   = src/Fisica
 RUST_DIR     = .
 RUST_LIB_PATH = ./target/release
 
 # Arquivos C
 FONTES    = $(SRC_DIR)/RendererGL.c      \
             $(CAMERA_DIR)/Camera.c       \
+			src/Colisores/Fisica.c       \
             src/Inputs/Inputs.c          \
             src/Colisores/ColisoesAABB.c \
             src/Sprites/Sprites.c        \

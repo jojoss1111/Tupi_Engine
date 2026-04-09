@@ -117,8 +117,8 @@ O GLAD já está incluso no repositório em `src/glad.c` e `include/glad/`, não
 
 ```bash
 # Clone o repositório
-git clone https://github.com/seu-usuario/tupi-engine.git
-cd tupi-engine
+git clone https://github.com/jojoss1111/Tupi_Engine.git
+cd Tupi_Engine
 
 # Compile a biblioteca compartilhada
 make
