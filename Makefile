@@ -1,82 +1,74 @@
-# Makefile - TupiEngine
-# Compila o C em uma .so e executa com LuaJIT
-
+# Makefile - TupiEngine (C + Rust + LuaJIT)
 # ============================================================
 # CONFIGURAÇÃO
 # ============================================================
 
 CC        = gcc
 LUAJIT    = luajit
+CARGO     = cargo
 
 # Diretórios
-SRC_DIR   = src/Renderizador
-OUT_DIR   = .
+SRC_DIR      = src/Renderizador
+CAMERA_DIR   = src/Camera
+RUST_DIR     = .
+RUST_LIB_PATH = ./target/release
 
-# Arquivos C — inclui o glad.c agora
-FONTES    = $(SRC_DIR)/RendererGL.c \
-            src/Inputs/Inputs.c     \
+# Arquivos C
+FONTES    = $(SRC_DIR)/RendererGL.c      \
+            $(CAMERA_DIR)/Camera.c       \
+            src/Inputs/Inputs.c          \
+            src/Colisores/ColisoesAABB.c \
+            src/Sprites/Sprites.c        \
             src/glad.c
 
-# Biblioteca de saída
-LIB       = libtupi.so
+LIB_NOME  = libtupi.so
 
 # Flags de compilação
-# -Iinclude  → para encontrar glad/glad.h e KHR/khrplatform.h
-# -Isrc      → para os headers internos da engine
 CFLAGS    = -O2 -Wall -Wextra -fPIC \
             -I$(SRC_DIR)            \
+            -I$(CAMERA_DIR)         \
             -Iinclude               \
             -Isrc
 
-# Bibliotecas externas
-# -ldl é necessário para o GLAD carregar as funções OpenGL dinamicamente
-# Linux: sudo apt install libglfw3-dev libgl-dev
-LIBS      = -lglfw -lGL -lm -ldl
+# Bibliotecas e linkagem
+LIBS      = -L$(RUST_LIB_PATH) -ltupi_seguro \
+            -lglfw -lGL -lm -ldl -lpthread
 
 # ============================================================
 # REGRAS
 # ============================================================
 
-.PHONY: all rodar limpar instalar-deps ajuda
+.PHONY: all compilar_rust $(LIB_NOME) rodar limpar instalar-deps ajuda
 
-## Compila a biblioteca compartilhada (.so)
-all: $(LIB)
+all: compilar_rust $(LIB_NOME)
 
-$(LIB): $(FONTES)
-	@echo "[TupiEngine] Compilando $(LIB)..."
-	$(CC) $(CFLAGS) -shared -o $(LIB) $(FONTES) $(LIBS)
-	@echo "[TupiEngine] $(LIB) compilado com sucesso!"
+compilar_rust:
+	@echo "[TupiEngine] Compilando módulo de segurança em Rust..."
+	cd $(RUST_DIR) && $(CARGO) build --release
 
-## Compila e executa o jogo
+$(LIB_NOME): $(FONTES)
+	@echo "[TupiEngine] Compilando $(LIB_NOME) com suporte a Rust..."
+	$(CC) $(CFLAGS) -shared -o $(LIB_NOME) $(FONTES) $(LIBS)
+	@echo "[TupiEngine] Engine compilada com sucesso!"
+
 rodar: all
 	@echo "[TupiEngine] Iniciando jogo..."
 	$(LUAJIT) main.lua
 
-## Remove arquivos compilados
 limpar:
 	@echo "[TupiEngine] Limpando..."
-	rm -f $(LIB)
+	rm -f $(LIB_NOME)
+	cd $(RUST_DIR) && $(CARGO) clean
 	@echo "[TupiEngine] Limpo!"
 
-## Instala as dependências no Ubuntu/Debian
 instalar-deps:
-	@echo "[TupiEngine] Instalando dependências..."
-	sudo apt-get update
-	sudo apt-get install -y \
-		libglfw3-dev \
-		libgl-dev    \
-		luajit       \
-		build-essential
+	@echo "[TupiEngine] Instalando dependências (Arch Linux)..."
+	sudo pacman -S --needed glfw-x11 mesa luajit base-devel rust
 	@echo "[TupiEngine] Dependências instaladas!"
 
-## Mostra a ajuda
 ajuda:
-	@echo ""
-	@echo "  TupiEngine - Makefile"
-	@echo ""
-	@echo "  make               -> Compila a engine"
-	@echo "  make rodar         -> Compila e roda o jogo"
-	@echo "  make limpar        -> Remove arquivos compilados"
-	@echo "  make instalar-deps -> Instala dependências (Ubuntu/Debian)"
-	@echo "  make ajuda         -> Esta mensagem"
-	@echo ""
+	@echo "Comandos disponíveis:"
+	@echo "  make             - Compila Rust e a Engine C"
+	@echo "  make rodar       - Compila e executa o jogo com LuaJIT"
+	@echo "  make limpar      - Remove arquivos gerados (C e Rust)"
+	@echo "  make instalar-deps - Instala bibliotecas necessárias via pacman"

@@ -5,6 +5,7 @@
 #include "RendererGL.h"
 #include "../Inputs/Inputs.h"
 #include "../Sprites/Sprites.h"
+#include "../Camera/Camera.h"
 
 // ============================================================
 // SHADERS GLSL (formas 2D sem textura)
@@ -34,6 +35,11 @@ static GLFWwindow* _janela   = NULL;
 static int         _largura  = 800;
 static int         _altura   = 600;
 
+// Resolução lógica (coordenadas do mundo) — usada pela câmera
+// quando a janela tem escala DPI diferente da resolução lógica.
+static int _logico_w = 800;
+static int _logico_h = 600;
+
 static float _fundo_r = 0.1f;
 static float _fundo_g = 0.1f;
 static float _fundo_b = 0.15f;
@@ -54,6 +60,13 @@ static GLint _loc_projecao = -1;
 static GLint _loc_cor      = -1;
 
 #define TUPI_MAX_VERTICES 1024
+
+// ============================================================
+// GETTERS INTERNOS — usados por Camera.c via extern
+// ============================================================
+
+GLuint _tupi_shader_get(void)       { return _shader;       }
+GLint  _tupi_loc_projecao_get(void) { return _loc_projecao; }
 
 // ============================================================
 // HELPERS DE SHADER
@@ -93,32 +106,14 @@ static GLuint _criar_programa(const char* vert, const char* frag) {
 }
 
 // ============================================================
-// PROJEÇÃO ORTOGRÁFICA
-// Origem no canto superior esquerdo, Y cresce para baixo
+// PROJEÇÃO / CÂMERA — reconfigura MVP ao redimensionar
 // ============================================================
-
-static void _atualizar_projecao(int largura, int altura) {
-    float L = 0.0f, R = (float)largura;
-    float T = 0.0f, B = (float)altura;
-    float N = -1.0f, F = 1.0f;
-
-    float proj[16] = {
-        2.0f/(R-L),    0.0f,          0.0f,         0.0f,
-        0.0f,          2.0f/(T-B),    0.0f,         0.0f,
-        0.0f,          0.0f,         -2.0f/(F-N),   0.0f,
-        -(R+L)/(R-L), -(T+B)/(T-B), -(F+N)/(F-N),  1.0f
-    };
-
-    glUseProgram(_shader);
-    glUniformMatrix4fv(_loc_projecao, 1, GL_FALSE, proj);
-
-    // Compartilha a matriz com o sistema de sprites
-    tupi_sprite_set_projecao(proj);
-}
 
 static void _configurar_projecao(int largura, int altura) {
     glViewport(0, 0, largura, altura);
-    _atualizar_projecao(largura, altura);
+    // A câmera usa _logico_w/_logico_h como espaço de mundo.
+    // O viewport físico (largura × altura) fica no glViewport acima.
+    tupi_camera_frame(_logico_w, _logico_h);
 }
 
 static void _callback_resize(GLFWwindow* janela, int largura, int altura) {
@@ -130,6 +125,29 @@ static void _callback_resize(GLFWwindow* janela, int largura, int altura) {
 
 static void _erro_glfw(int codigo, const char* descricao) {
     fprintf(stderr, "[TupiEngine] Erro GLFW %d: %s\n", codigo, descricao);
+}
+
+// Forward declaration
+static void _desenhar(GLenum modo, float* verts, int n);
+
+// ============================================================
+// FLUSH CALLBACK
+// ============================================================
+
+static void _flush_batcher(const TupiDrawCall* calls, int n) {
+    for (int i = 0; i < n; i++) {
+        const TupiDrawCall* dc = &calls[i];
+        _cor_r = dc->cor[0];
+        _cor_g = dc->cor[1];
+        _cor_b = dc->cor[2];
+        _cor_a = dc->cor[3];
+        switch (dc->primitiva) {
+            case TUPI_RET: _desenhar(GL_TRIANGLE_STRIP, (float*)dc->verts, 4); break;
+            case TUPI_TRI: _desenhar(GL_TRIANGLES,      (float*)dc->verts, 3); break;
+            case TUPI_LIN: _desenhar(GL_LINES,          (float*)dc->verts, 2); break;
+            default: break;
+        }
+    }
 }
 
 // ============================================================
@@ -150,7 +168,19 @@ static void _desenhar(GLenum modo, float* verts, int n) {
 // JANELA
 // ============================================================
 
+// Flags de criação (preenchidas por tupi_janela_criar_ex antes de criar)
+static int _flag_sem_borda    = 0;
+static int _flag_sem_titulo   = 0;  // decoração mínima sem texto
+static float _escala_dpi      = 1.0f;
+
+// ----------------------------------------------------------
+// tupi_janela_criar — API original (compatibilidade total)
+// ----------------------------------------------------------
 int tupi_janela_criar(int largura, int altura, const char* titulo) {
+    return tupi_janela_criar_ex(largura, altura, titulo, 1.0f, 0, 0);
+}
+
+int tupi_janela_criar_ex(int largura, int altura, const char* titulo,float escala, int sem_borda, int sem_texto) {
     glfwSetErrorCallback(_erro_glfw);
 
     if (!glfwInit()) {
@@ -162,20 +192,30 @@ int tupi_janela_criar(int largura, int altura, const char* titulo) {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     glfwWindowHint(GLFW_SAMPLES, 4);
+    glfwWindowHint(GLFW_DECORATED, sem_borda ? GLFW_FALSE : GLFW_TRUE);
 
 #ifdef __APPLE__
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
 #endif
 
-    _janela = glfwCreateWindow(largura, altura, titulo, NULL, NULL);
+    const char* titulo_real = (sem_texto || sem_borda) ? "" : titulo;
+    _janela = glfwCreateWindow(largura, altura, titulo_real, NULL, NULL);
     if (!_janela) {
         fprintf(stderr, "[TupiEngine] Falha ao criar janela!\n");
         glfwTerminate();
         return 0;
     }
 
-    _largura = largura;
-    _altura  = altura;
+    _largura      = largura;
+    _altura       = altura;
+    _flag_sem_borda  = sem_borda;
+    _flag_sem_titulo = sem_texto;
+    _escala_dpi      = (escala > 0.0f) ? escala : 1.0f;
+
+    // Resolução lógica = pixels físicos / escala
+    // Ex: janela 800×600 com escala 2.0 → mundo de 400×300
+    _logico_w = (int)(largura  / _escala_dpi);
+    _logico_h = (int)(altura   / _escala_dpi);
 
     glfwMakeContextCurrent(_janela);
     glfwSwapInterval(1);
@@ -194,12 +234,10 @@ int tupi_janela_criar(int largura, int altura, const char* titulo) {
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glEnable(GL_MULTISAMPLE);
 
-    // Shader de formas 2D
     _shader       = _criar_programa(_vert_src, _frag_src);
     _loc_projecao = glGetUniformLocation(_shader, "uProjecao");
     _loc_cor      = glGetUniformLocation(_shader, "uCor");
 
-    // VAO/VBO de formas 2D
     glGenVertexArrays(1, &_vao);
     glGenBuffers(1, &_vbo);
     glBindVertexArray(_vao);
@@ -209,16 +247,16 @@ int tupi_janela_criar(int largura, int altura, const char* titulo) {
     glEnableVertexAttribArray(0);
     glBindVertexArray(0);
 
-    // Inicializa sistema de sprites (shader de textura + VAO próprio)
     tupi_sprite_iniciar();
-
-    // Projeção inicial — envia para ambos os shaders
+    tupi_batcher_registrar_flush(_flush_batcher);
     _configurar_projecao(largura, altura);
 
     _tempo_anterior = glfwGetTime();
     tupi_input_iniciar(_janela);
 
-    printf("[TupiEngine] Janela criada: %dx%d - '%s'\n", largura, altura, titulo);
+    printf("[TupiEngine] Janela criada: %dx%d (logico: %dx%d, escala: %.1f) - '%s'\n",
+           largura, altura, _logico_w, _logico_h, _escala_dpi,
+           (sem_borda || sem_texto) ? titulo : titulo_real);
     printf("[TupiEngine] Bem-vindo a TupiEngine! Versao 0.3\n");
 
     return 1;
@@ -235,9 +273,11 @@ void tupi_janela_limpar(void) {
     _tempo_anterior = agora;
     glClearColor(_fundo_r, _fundo_g, _fundo_b, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
+    tupi_camera_frame(_logico_w, _logico_h);
 }
 
 void tupi_janela_atualizar(void) {
+    tupi_batcher_flush();
     glfwSwapBuffers(_janela);
     tupi_input_salvar_estado();
     glfwPollEvents();
@@ -246,18 +286,54 @@ void tupi_janela_atualizar(void) {
 
 void tupi_janela_fechar(void) {
     tupi_sprite_encerrar();
-    if (_shader) { glDeleteProgram(_shader);         _shader = 0; }
-    if (_vbo)    { glDeleteBuffers(1, &_vbo);        _vbo    = 0; }
-    if (_vao)    { glDeleteVertexArrays(1, &_vao);   _vao    = 0; }
-    if (_janela) { glfwDestroyWindow(_janela);       _janela = NULL; }
+    if (_shader) { glDeleteProgram(_shader);        _shader = 0; }
+    if (_vbo)    { glDeleteBuffers(1, &_vbo);       _vbo    = 0; }
+    if (_vao)    { glDeleteVertexArrays(1, &_vao);  _vao    = 0; }
+    if (_janela) { glfwDestroyWindow(_janela);      _janela = NULL; }
     glfwTerminate();
     printf("[TupiEngine] Janela fechada. Ate mais!\n");
 }
 
-double tupi_tempo(void)       { return glfwGetTime(); }
-double tupi_delta_tempo(void) { return _delta;        }
-int tupi_janela_largura(void) { return _largura;      }
-int tupi_janela_altura(void)  { return _altura;       }
+// ============================================================
+// CONTROLES DE JANELA EM TEMPO DE EXECUÇÃO
+// ============================================================
+
+// Muda o texto da barra de título em runtime
+void tupi_janela_set_titulo(const char* titulo) {
+    if (_janela && titulo) glfwSetWindowTitle(_janela, titulo);
+}
+
+// Ativa ou remove a decoração da janela em runtime (0 = sem borda, 1 = com borda)
+// Nota: nem todos os sistemas operacionais respeitam a mudança em runtime.
+void tupi_janela_set_decoracao(int ativo) {
+    if (!_janela) return;
+    glfwSetWindowAttrib(_janela, GLFW_DECORATED, ativo ? GLFW_TRUE : GLFW_FALSE);
+    _flag_sem_borda = !ativo;
+}
+
+// Alterna tela cheia / janela
+void tupi_janela_tela_cheia(int ativo) {
+    if (!_janela) return;
+    if (ativo) {
+        GLFWmonitor* monitor = glfwGetPrimaryMonitor();
+        const GLFWvidmode* modo = glfwGetVideoMode(monitor);
+        glfwSetWindowMonitor(_janela, monitor, 0, 0,
+                             modo->width, modo->height, modo->refreshRate);
+    } else {
+        glfwSetWindowMonitor(_janela, NULL,
+                             100, 100, _largura, _altura, 0);
+    }
+}
+
+// Retorna a escala DPI configurada na criação
+float tupi_janela_escala(void)   { return _escala_dpi; }
+
+double tupi_tempo(void)          { return glfwGetTime(); }
+double tupi_delta_tempo(void)    { return _delta;        }
+int    tupi_janela_largura(void) { return _logico_w;     } // coordenadas lógicas
+int    tupi_janela_altura(void)  { return _logico_h;     }
+int    tupi_janela_largura_px(void) { return _largura;   } // pixels físicos
+int    tupi_janela_altura_px(void)  { return _altura;    }
 
 // ============================================================
 // COR
@@ -277,10 +353,10 @@ void tupi_cor(float r, float g, float b, float a) {
 
 void tupi_retangulo(float x, float y, float largura, float altura) {
     float ts[8] = {
-        x,           y,
-        x + largura,  y,
-        x,            y + altura,
-        x + largura,  y + altura,
+        x,          y,
+        x + largura, y,
+        x,           y + altura,
+        x + largura, y + altura,
     };
     _desenhar(GL_TRIANGLE_STRIP, ts, 4);
 }

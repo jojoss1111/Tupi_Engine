@@ -1,14 +1,27 @@
 -- engineffi.lua
 -- TupiEngine - Declarações FFI para o LuaJIT
--- Liga o Lua com as funções C do RendererGL, ColisoesAABB e Sprites
+-- Liga o Lua com as funções C do RendererGL, ColisoesAABB, Sprites e Câmera
 
 local ffi = require("ffi")
 
 ffi.cdef[[
     /* ============================
-       JANELA
+       JANELA — criação
     ============================ */
     int    tupi_janela_criar(int largura, int altura, const char* titulo);
+    int    tupi_janela_criar_ex(int largura, int altura, const char* titulo,
+                                float escala, int sem_borda, int sem_texto);
+
+    /* ============================
+       JANELA — controle runtime
+    ============================ */
+    void   tupi_janela_set_titulo(const char* titulo);
+    void   tupi_janela_set_decoracao(int ativo);
+    void   tupi_janela_tela_cheia(int ativo);
+
+    /* ============================
+       JANELA — estado e tempo
+    ============================ */
     int    tupi_janela_aberta(void);
     void   tupi_janela_limpar(void);
     void   tupi_janela_atualizar(void);
@@ -17,6 +30,9 @@ ffi.cdef[[
     double tupi_delta_tempo(void);
     int    tupi_janela_largura(void);
     int    tupi_janela_altura(void);
+    int    tupi_janela_largura_px(void);
+    int    tupi_janela_altura_px(void);
+    float  tupi_janela_escala(void);
 
     /* ============================
        COR
@@ -81,14 +97,12 @@ ffi.cdef[[
        SPRITES
     ============================ */
 
-    // Estrutura da imagem carregada (textura na GPU)
     typedef struct {
         unsigned int textura;
         int largura;
         int altura;
     } TupiSprite;
 
-    // Estrutura do objeto na tela
     typedef struct {
         float x, y;
         float largura, altura;
@@ -98,13 +112,9 @@ ffi.cdef[[
         TupiSprite* imagem;
     } TupiObjeto;
 
-    // Carrega um PNG do disco — retorna ponteiro ou NULL se falhar
     TupiSprite* tupi_sprite_carregar(const char* caminho);
+    void        tupi_sprite_destruir(TupiSprite* sprite);
 
-    // Libera a textura e a memória do sprite
-    void tupi_sprite_destruir(TupiSprite* sprite);
-
-    // Cria um objeto com todos os parâmetros
     TupiObjeto tupi_objeto_criar(
         float x, float y,
         float largura, float altura,
@@ -114,8 +124,33 @@ ffi.cdef[[
         TupiSprite* imagem
     );
 
-    // Desenha o objeto na tela
     void tupi_objeto_desenhar(TupiObjeto* obj);
+
+    /* ============================
+       BATCH (draw calls agrupados)
+    ============================ */
+
+    void tupi_objeto_enviar_batch(TupiObjeto* obj, int z_index);
+    void tupi_batch_desenhar(void);
+
+    /* ============================
+       CÂMERA 2D
+    ============================ */
+    void  tupi_camera_reset(void);
+    void  tupi_camera_pos(float x, float y);
+    void  tupi_camera_mover(float dx, float dy);
+    void  tupi_camera_zoom(float z);
+    void  tupi_camera_rotacao(float angulo);
+    void  tupi_camera_seguir(float alvo_x, float alvo_y,
+                              float lerp_fator, float dt);
+
+    float tupi_camera_get_x(void);
+    float tupi_camera_get_y(void);
+    float tupi_camera_get_zoom(void);
+    float tupi_camera_get_rotacao(void);
+
+    void  tupi_camera_tela_mundo_lua(float sx, float sy, float* wx, float* wy);
+    void  tupi_camera_mundo_tela_lua(float wx, float wy, float* sx, float* sy);
 ]]
 
 local tupiC = ffi.load("./libtupi.so")

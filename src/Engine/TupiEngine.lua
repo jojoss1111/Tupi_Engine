@@ -1,6 +1,7 @@
 -- TupiEngine.lua
 -- TupiEngine - API principal em Lua
 -- Interface que o programador usa para criar jogos
+-- Edite apenas o main.lua — não mexa aqui.
 
 local ffi = require("ffi")
 local C   = require("src.Engine.engineffi")
@@ -11,6 +12,10 @@ local Tupi = {}
 -- JANELA
 -- ============================================================
 
+--- Cria a janela com configurações básicas.
+-- @param largura  número (padrão 800)
+-- @param altura   número (padrão 600)
+-- @param titulo   string (padrão "TupiEngine")
 function Tupi.janela(largura, altura, titulo)
     largura = largura or 800
     altura  = altura  or 600
@@ -20,15 +25,83 @@ function Tupi.janela(largura, altura, titulo)
     end
 end
 
-function Tupi.rodando()   return C.tupi_janela_aberta() == 1 end
-function Tupi.limpar()    C.tupi_janela_limpar()             end
-function Tupi.atualizar() C.tupi_janela_atualizar()          end
-function Tupi.fechar()    C.tupi_janela_fechar()              end
+--- Cria a janela com opções avançadas.
+--
+-- @param largura   número — largura em pixels
+-- @param altura    número — altura em pixels
+-- @param titulo    string — título na barra do OS
+-- @param opcoes    tabela opcional com os campos:
+--
+--   escala    (número, padrão 1.0)
+--             Fator de escala DPI. escala=2 faz o mundo ter
+--             largura/2 × altura/2 — ideal para pixel art sem
+--             filtro. Use 1.0 para comportamento normal.
+--
+--   semBorda  (boolean, padrão false)
+--             Remove a decoração do sistema (barra de título,
+--             botões de fechar/minimizar). Útil para splash
+--             screen ou HUD em tela cheia.
+--
+--   semTitulo (boolean, padrão false)
+--             Deixa a barra de título em branco no OS.
+--             Só faz diferença quando semBorda = false.
+--
+-- Exemplo — pixel art 2× sem barra:
+--   Tupi.janelaEx(800, 600, "MeuJogo", { escala=2, semBorda=true })
+--
+function Tupi.janelaEx(largura, altura, titulo, opcoes)
+    largura = largura or 800
+    altura  = altura  or 600
+    titulo  = titulo  or "TupiEngine"
+    opcoes  = opcoes  or {}
 
-function Tupi.tempo()   return tonumber(C.tupi_tempo())          end
-function Tupi.dt()      return tonumber(C.tupi_delta_tempo())    end
-function Tupi.largura() return tonumber(C.tupi_janela_largura()) end
-function Tupi.altura()  return tonumber(C.tupi_janela_altura())  end
+    local escala    = opcoes.escala    or 1.0
+    local semBorda  = opcoes.semBorda  and 1 or 0
+    local semTitulo = opcoes.semTitulo and 1 or 0
+
+    if C.tupi_janela_criar_ex(largura, altura, titulo,
+                               escala, semBorda, semTitulo) == 0 then
+        error("[TupiEngine] Falha ao criar janela!")
+    end
+end
+
+function Tupi.rodando()   return C.tupi_janela_aberta()   == 1 end
+function Tupi.limpar()    C.tupi_janela_limpar()               end
+function Tupi.atualizar() C.tupi_janela_atualizar()            end
+function Tupi.fechar()    C.tupi_janela_fechar()               end
+
+function Tupi.tempo()   return tonumber(C.tupi_tempo())             end
+function Tupi.dt()      return tonumber(C.tupi_delta_tempo())       end
+
+--- Tamanho em coordenadas lógicas (afetado pela escala DPI).
+-- Use sempre este para posicionar objetos no mundo.
+function Tupi.largura() return tonumber(C.tupi_janela_largura())    end
+function Tupi.altura()  return tonumber(C.tupi_janela_altura())     end
+
+--- Tamanho em pixels físicos reais da janela.
+function Tupi.larguraPx() return tonumber(C.tupi_janela_largura_px()) end
+function Tupi.alturaPx()  return tonumber(C.tupi_janela_altura_px())  end
+
+--- Fator de escala configurado na criação.
+function Tupi.escala() return tonumber(C.tupi_janela_escala()) end
+
+--- Muda o texto da barra de título em tempo de execução.
+-- @param titulo  string
+function Tupi.setTitulo(titulo)
+    C.tupi_janela_set_titulo(titulo or "")
+end
+
+--- Ativa ou remove a borda/decoração da janela em runtime.
+-- @param ativo  boolean — true = com borda, false = sem borda
+function Tupi.setDecoracao(ativo)
+    C.tupi_janela_set_decoracao(ativo and 1 or 0)
+end
+
+--- Entra ou sai do modo tela cheia.
+-- @param ativo  boolean
+function Tupi.telaCheia(ativo)
+    C.tupi_janela_tela_cheia(ativo and 1 or 0)
+end
 
 -- ============================================================
 -- COR
@@ -71,9 +144,6 @@ end
 
 -- ============================================================
 -- FORMAS 2D
--- Todas aceitam uma tabela de cor opcional no último parâmetro:
---   Tupi.retangulo(x, y, 100, 50)                -> usa cor atual
---   Tupi.retangulo(x, y, 100, 50, Tupi.VERMELHO) -> vermelho só aqui
 -- ============================================================
 
 function Tupi.retangulo(x, y, largura, altura, cor)
@@ -116,25 +186,12 @@ end
 -- UTILITÁRIOS MATEMÁTICOS
 -- ============================================================
 
-function Tupi.lerp(a, b, t)
-    return a + (b - a) * t
-end
-
-function Tupi.aleatorio(minimo, maximo)
-    return minimo + math.random() * (maximo - minimo)
-end
-
-function Tupi.rad(graus)
-    return graus * math.pi / 180
-end
-
-function Tupi.graus(radianos)
-    return radianos * 180 / math.pi
-end
-
+function Tupi.lerp(a, b, t)       return a + (b - a) * t                  end
+function Tupi.aleatorio(min, max) return min + math.random() * (max - min) end
+function Tupi.rad(graus)          return graus * math.pi / 180             end
+function Tupi.graus(rad)          return rad * 180 / math.pi               end
 function Tupi.distancia(x1, y1, x2, y2)
-    local dx = x2 - x1
-    local dy = y2 - y1
+    local dx, dy = x2 - x1, y2 - y1
     return math.sqrt(dx * dx + dy * dy)
 end
 
@@ -142,80 +199,56 @@ end
 -- CONSTANTES DE TECLAS
 -- ============================================================
 
--- Teclas especiais
-Tupi.TECLA_ESPACO    = 32
-Tupi.TECLA_ENTER     = 257
-Tupi.TECLA_TAB       = 258
-Tupi.TECLA_BACKSPACE = 259
-Tupi.TECLA_ESC       = 256
-Tupi.TECLA_SHIFT_ESQ = 340
-Tupi.TECLA_SHIFT_DIR = 344
-Tupi.TECLA_CTRL_ESQ  = 341
-Tupi.TECLA_CTRL_DIR  = 345
-Tupi.TECLA_ALT_ESQ   = 342
-Tupi.TECLA_ALT_DIR   = 346
+Tupi.TECLA_ESPACO    = 32;  Tupi.TECLA_ENTER     = 257; Tupi.TECLA_TAB       = 258
+Tupi.TECLA_BACKSPACE = 259; Tupi.TECLA_ESC        = 256
+Tupi.TECLA_SHIFT_ESQ = 340; Tupi.TECLA_SHIFT_DIR  = 344
+Tupi.TECLA_CTRL_ESQ  = 341; Tupi.TECLA_CTRL_DIR   = 345
+Tupi.TECLA_ALT_ESQ   = 342; Tupi.TECLA_ALT_DIR    = 346
 
--- Setas direcionais
-Tupi.TECLA_CIMA     = 265
-Tupi.TECLA_BAIXO    = 264
-Tupi.TECLA_ESQUERDA = 263
-Tupi.TECLA_DIREITA  = 262
+Tupi.TECLA_CIMA     = 265;  Tupi.TECLA_BAIXO    = 264
+Tupi.TECLA_ESQUERDA = 263;  Tupi.TECLA_DIREITA  = 262
 
--- Letras
-Tupi.TECLA_A = 65  Tupi.TECLA_B = 66  Tupi.TECLA_C = 67  Tupi.TECLA_D = 68
-Tupi.TECLA_E = 69  Tupi.TECLA_F = 70  Tupi.TECLA_G = 71  Tupi.TECLA_H = 72
-Tupi.TECLA_I = 73  Tupi.TECLA_J = 74  Tupi.TECLA_K = 75  Tupi.TECLA_L = 76
-Tupi.TECLA_M = 77  Tupi.TECLA_N = 78  Tupi.TECLA_O = 79  Tupi.TECLA_P = 80
-Tupi.TECLA_Q = 81  Tupi.TECLA_R = 82  Tupi.TECLA_S = 83  Tupi.TECLA_T = 84
-Tupi.TECLA_U = 85  Tupi.TECLA_V = 86  Tupi.TECLA_W = 87  Tupi.TECLA_X = 88
-Tupi.TECLA_Y = 89  Tupi.TECLA_Z = 90
+Tupi.TECLA_A=65;  Tupi.TECLA_B=66;  Tupi.TECLA_C=67;  Tupi.TECLA_D=68
+Tupi.TECLA_E=69;  Tupi.TECLA_F=70;  Tupi.TECLA_G=71;  Tupi.TECLA_H=72
+Tupi.TECLA_I=73;  Tupi.TECLA_J=74;  Tupi.TECLA_K=75;  Tupi.TECLA_L=76
+Tupi.TECLA_M=77;  Tupi.TECLA_N=78;  Tupi.TECLA_O=79;  Tupi.TECLA_P=80
+Tupi.TECLA_Q=81;  Tupi.TECLA_R=82;  Tupi.TECLA_S=83;  Tupi.TECLA_T=84
+Tupi.TECLA_U=85;  Tupi.TECLA_V=86;  Tupi.TECLA_W=87;  Tupi.TECLA_X=88
+Tupi.TECLA_Y=89;  Tupi.TECLA_Z=90
 
--- Números da linha de cima
-Tupi.TECLA_0 = 48  Tupi.TECLA_1 = 49  Tupi.TECLA_2 = 50  Tupi.TECLA_3 = 51
-Tupi.TECLA_4 = 52  Tupi.TECLA_5 = 53  Tupi.TECLA_6 = 54  Tupi.TECLA_7 = 55
-Tupi.TECLA_8 = 56  Tupi.TECLA_9 = 57
+Tupi.TECLA_0=48; Tupi.TECLA_1=49; Tupi.TECLA_2=50; Tupi.TECLA_3=51
+Tupi.TECLA_4=52; Tupi.TECLA_5=53; Tupi.TECLA_6=54; Tupi.TECLA_7=55
+Tupi.TECLA_8=56; Tupi.TECLA_9=57
 
--- Numpad
-Tupi.TECLA_NUM0 = 320  Tupi.TECLA_NUM1 = 321  Tupi.TECLA_NUM2 = 322
-Tupi.TECLA_NUM3 = 323  Tupi.TECLA_NUM4 = 324  Tupi.TECLA_NUM5 = 325
-Tupi.TECLA_NUM6 = 326  Tupi.TECLA_NUM7 = 327  Tupi.TECLA_NUM8 = 328
-Tupi.TECLA_NUM9 = 329
+Tupi.TECLA_NUM0=320; Tupi.TECLA_NUM1=321; Tupi.TECLA_NUM2=322
+Tupi.TECLA_NUM3=323; Tupi.TECLA_NUM4=324; Tupi.TECLA_NUM5=325
+Tupi.TECLA_NUM6=326; Tupi.TECLA_NUM7=327; Tupi.TECLA_NUM8=328
+Tupi.TECLA_NUM9=329
 
--- F-Keys
-Tupi.TECLA_F1  = 290  Tupi.TECLA_F2  = 291  Tupi.TECLA_F3  = 292
-Tupi.TECLA_F4  = 293  Tupi.TECLA_F5  = 294  Tupi.TECLA_F6  = 295
-Tupi.TECLA_F7  = 296  Tupi.TECLA_F8  = 297  Tupi.TECLA_F9  = 298
-Tupi.TECLA_F10 = 299  Tupi.TECLA_F11 = 300  Tupi.TECLA_F12 = 301
+Tupi.TECLA_F1=290;  Tupi.TECLA_F2=291;  Tupi.TECLA_F3=292
+Tupi.TECLA_F4=293;  Tupi.TECLA_F5=294;  Tupi.TECLA_F6=295
+Tupi.TECLA_F7=296;  Tupi.TECLA_F8=297;  Tupi.TECLA_F9=298
+Tupi.TECLA_F10=299; Tupi.TECLA_F11=300; Tupi.TECLA_F12=301
 
--- Botões do mouse
-Tupi.MOUSE_ESQ  = 0
-Tupi.MOUSE_DIR  = 1
-Tupi.MOUSE_MEIO = 2
+Tupi.MOUSE_ESQ=0; Tupi.MOUSE_DIR=1; Tupi.MOUSE_MEIO=2
 
 -- ============================================================
--- TECLADO
+-- TECLADO / MOUSE
 -- ============================================================
 
-function Tupi.teclaPressionou(tecla) return C.tupi_tecla_pressionou(tecla) == 1 end
-function Tupi.teclaSegurando(tecla)  return C.tupi_tecla_segurando(tecla)  == 1 end
-function Tupi.teclaSoltou(tecla)     return C.tupi_tecla_soltou(tecla)     == 1 end
+function Tupi.teclaPressionou(t) return C.tupi_tecla_pressionou(t) == 1 end
+function Tupi.teclaSegurando(t)  return C.tupi_tecla_segurando(t)  == 1 end
+function Tupi.teclaSoltou(t)     return C.tupi_tecla_soltou(t)     == 1 end
 
--- ============================================================
--- MOUSE
--- ============================================================
+function Tupi.mouseX()   return tonumber(C.tupi_mouse_x())  end
+function Tupi.mouseY()   return tonumber(C.tupi_mouse_y())  end
+function Tupi.mouseDX()  return tonumber(C.tupi_mouse_dx()) end
+function Tupi.mouseDY()  return tonumber(C.tupi_mouse_dy()) end
+function Tupi.mousePos() return tonumber(C.tupi_mouse_x()), tonumber(C.tupi_mouse_y()) end
 
-function Tupi.mouseX()  return tonumber(C.tupi_mouse_x())  end
-function Tupi.mouseY()  return tonumber(C.tupi_mouse_y())  end
-function Tupi.mouseDX() return tonumber(C.tupi_mouse_dx()) end
-function Tupi.mouseDY() return tonumber(C.tupi_mouse_dy()) end
-
-function Tupi.mousePos()
-    return tonumber(C.tupi_mouse_x()), tonumber(C.tupi_mouse_y())
-end
-
-function Tupi.mouseClicou(botao)    return C.tupi_mouse_clicou(botao    or 0) == 1 end
-function Tupi.mouseSegurando(botao) return C.tupi_mouse_segurando(botao  or 0) == 1 end
-function Tupi.mouseSoltou(botao)    return C.tupi_mouse_soltou(botao    or 0) == 1 end
+function Tupi.mouseClicou(b)    return C.tupi_mouse_clicou(b    or 0) == 1 end
+function Tupi.mouseSegurando(b) return C.tupi_mouse_segurando(b or 0) == 1 end
+function Tupi.mouseSoltou(b)    return C.tupi_mouse_soltou(b    or 0) == 1 end
 
 function Tupi.scrollX() return tonumber(C.tupi_scroll_x()) end
 function Tupi.scrollY() return tonumber(C.tupi_scroll_y()) end
@@ -223,172 +256,357 @@ function Tupi.scrollY() return tonumber(C.tupi_scroll_y()) end
 -- ============================================================
 -- COLISÕES AABB
 -- ============================================================
--- Retangulo: { x, y, largura, altura }
--- Circulo:   { x, y, raio }
---
--- Uso:
---   if Tupi.col.retRet(jogador, parede) then ... end
---
---   local info = Tupi.col.retRetInfo(jogador, parede)
---   if info.colidindo then
---       jogador.x = jogador.x + info.dx
---       jogador.y = jogador.y + info.dy
---   end
--- ============================================================
 
 Tupi.col = {}
 
-local function _ret(t)
-    return ffi.new("TupiRetCol", t.x, t.y, t.largura, t.altura)
-end
-
-local function _cir(t)
-    return ffi.new("TupiCircCol", t.x, t.y, t.raio)
-end
-
+local function _ret(t) return ffi.new("TupiRetCol",  t.x, t.y, t.largura, t.altura) end
+local function _cir(t) return ffi.new("TupiCircCol", t.x, t.y, t.raio)              end
 local function _info(c)
     return { colidindo = c.colidindo == 1, dx = tonumber(c.dx), dy = tonumber(c.dy) }
 end
 
--- Retangulo vs Retangulo
-function Tupi.col.retRet(a, b)     return C.tupi_ret_ret(_ret(a), _ret(b)) == 1        end
-function Tupi.col.retRetInfo(a, b) return _info(C.tupi_ret_ret_info(_ret(a), _ret(b))) end
-
--- Circulo vs Circulo
-function Tupi.col.cirCir(a, b)     return C.tupi_cir_cir(_cir(a), _cir(b)) == 1        end
-function Tupi.col.cirCirInfo(a, b) return _info(C.tupi_cir_cir_info(_cir(a), _cir(b))) end
-
--- Retangulo vs Circulo
-function Tupi.col.retCir(r, c) return C.tupi_ret_cir(_ret(r), _cir(c)) == 1 end
-
--- Ponto vs Forma
-function Tupi.col.pontoRet(px, py, r) return C.tupi_ponto_ret(px, py, _ret(r)) == 1 end
-function Tupi.col.pontoCir(px, py, c) return C.tupi_ponto_cir(px, py, _cir(c)) == 1 end
-
--- Mouse vs Forma
-function Tupi.col.mouseNoRet(r) return Tupi.col.pontoRet(Tupi.mouseX(), Tupi.mouseY(), r) end
-function Tupi.col.mouseNoCir(c) return Tupi.col.pontoCir(Tupi.mouseX(), Tupi.mouseY(), c) end
+function Tupi.col.retRet(a, b)        return C.tupi_ret_ret(_ret(a), _ret(b)) == 1             end
+function Tupi.col.retRetInfo(a, b)    return _info(C.tupi_ret_ret_info(_ret(a), _ret(b)))       end
+function Tupi.col.cirCir(a, b)        return C.tupi_cir_cir(_cir(a), _cir(b)) == 1             end
+function Tupi.col.cirCirInfo(a, b)    return _info(C.tupi_cir_cir_info(_cir(a), _cir(b)))       end
+function Tupi.col.retCir(r, c)        return C.tupi_ret_cir(_ret(r), _cir(c)) == 1             end
+function Tupi.col.pontoRet(px, py, r) return C.tupi_ponto_ret(px, py, _ret(r)) == 1            end
+function Tupi.col.pontoCir(px, py, c) return C.tupi_ponto_cir(px, py, _cir(c)) == 1            end
+function Tupi.col.mouseNoRet(r)       return Tupi.col.pontoRet(Tupi.mouseX(), Tupi.mouseY(), r) end
+function Tupi.col.mouseNoCir(c)       return Tupi.col.pontoCir(Tupi.mouseX(), Tupi.mouseY(), c) end
 
 -- ============================================================
 -- SPRITES
 -- ============================================================
--- Uso basico:
---   local sheet  = Tupi.carregarSprite("assets/player.png")
---   local player = Tupi.criarObjeto(100, 200, 16, 16, 0, 0, 1.0, 3.0, sheet)
---
---   -- No loop:
---   player[0].coluna = 2
---   Tupi.desenharObjeto(player)
---
---   -- Ao sair:
---   Tupi.destruirSprite(sheet)
--- ============================================================
 
+--- Carrega uma imagem na GPU. Lança erro se falhar.
+-- @param caminho  string — caminho do arquivo (PNG, JPEG, BMP)
+-- @return         ponteiro TupiSprite*
 function Tupi.carregarSprite(caminho)
+    assert(type(caminho) == "string", "[TupiEngine] carregarSprite: caminho deve ser string")
     local spr = C.tupi_sprite_carregar(caminho)
     if spr == nil then
-        error("[TupiEngine] Falha ao carregar sprite: " .. caminho)
+        error("[TupiEngine] carregarSprite: não foi possível carregar '" .. caminho .. "'")
     end
     return spr
 end
 
-function Tupi.destruirSprite(sprite)
-    C.tupi_sprite_destruir(sprite)
+--- Libera um sprite da GPU.
+function Tupi.destruirSprite(spr)
+    if spr ~= nil then C.tupi_sprite_destruir(spr) end
 end
 
-function Tupi.criarObjeto(x, y, largura, altura, coluna, linha, transparencia, escala, imagem)
+--- Cria um objeto para exibir um sprite ou sprite sheet na tela.
+--
+-- @param x             posição X inicial (pixels, canto superior esquerdo)
+-- @param y             posição Y inicial (pixels, canto superior esquerdo)
+-- @param largura       largura de cada célula do sprite sheet em pixels
+-- @param altura        altura de cada célula em pixels
+-- @param sprite        ponteiro TupiSprite* retornado por carregarSprite()
+-- @param transparencia (opcional) 0.0 invisível … 1.0 opaco — padrão 1.0
+-- @param escala        (opcional) fator de escala — padrão 1.0
+-- @return              cdata TupiObjeto[1]
+--
+-- Exemplo:
+--   local player = Tupi.criarObjeto(100, 200, 32, 32, sprite)
+--   local boss   = Tupi.criarObjeto(400, 100, 64, 64, sprite, 0.9, 2.0)
+function Tupi.criarObjeto(x, y, largura, altura, wx, hy, transparencia, escala, sprite)
+    assert(sprite ~= nil, "[TupiEngine] criarObjeto: sprite não pode ser nil")
     local obj = ffi.new("TupiObjeto[1]")
     obj[0] = C.tupi_objeto_criar(
-        x, y,
+        x or 0, y or 0,
         largura, altura,
-        coluna, linha,
+        wx,
+        hy,
         transparencia or 1.0,
         escala        or 1.0,
-        imagem
+        sprite
     )
     return obj
 end
 
-function Tupi.desenharObjeto(objeto)
-    C.tupi_objeto_desenhar(objeto)
+--- Desenha um objeto imediatamente (sem batch).
+function Tupi.desenharObjeto(obj)
+    C.tupi_objeto_desenhar(obj)
+end
+
+--- Enfileira o objeto no batch (use batchDesenhar() ao final do frame).
+function Tupi.enviarBatch(obj, z)
+    C.tupi_objeto_enviar_batch(obj, z or 0)
+end
+
+--- Dispara todos os draw calls acumulados no batch.
+function Tupi.batchDesenhar()
+    C.tupi_batch_desenhar()
+end
+
+-- ============================================================
+-- ANIMAÇÕES (sprite sheet por coluna/linha)
+-- ============================================================
+
+local _animEstado   = {}
+local _animContador = 0
+
+local function _chaveAnim(anim, objeto)
+    return tostring(anim._id) .. ":" .. tostring(ffi.cast("void*", objeto))
+end
+
+local function _pegarEstado(anim, objeto)
+    local chave = _chaveAnim(anim, objeto)
+    if not _animEstado[chave] then
+        _animEstado[chave] = { frame = 0, tempo = 0.0, terminado = false }
+    end
+    return _animEstado[chave]
+end
+
+function Tupi.criarAnim(sprite, largura, altura, colunas, linhas, fps, loop)
+    assert(sprite  ~= nil,                              "[Anim] sprite não pode ser nil")
+    assert(type(largura)  == "number",                  "[Anim] largura é obrigatória")
+    assert(type(altura)   == "number",                  "[Anim] altura é obrigatória")
+    assert(type(colunas)  == "table" and #colunas > 0,  "[Anim] colunas deve ter ao menos 1 elemento")
+    assert(type(linhas)   == "table" and #linhas  > 0,  "[Anim] linhas deve ter ao menos 1 elemento")
+
+    _animContador = _animContador + 1
+
+    local pares = {}
+    for _, lin in ipairs(linhas) do
+        for _, col in ipairs(colunas) do
+            table.insert(pares, { col = col, linha = lin })
+        end
+    end
+
+    return {
+        _id     = _animContador,
+        _sprite = sprite,
+        _larg   = largura,
+        _alt    = altura,
+        _pares  = pares,
+        _fps    = fps  or 8,
+        _loop   = (loop == nil) and true or loop,
+    }
+end
+
+function Tupi.tocarAnim(anim, objeto)
+    assert(anim and anim._pares, "[Anim] tocarAnim: anim inválida")
+
+    local estado = _pegarEstado(anim, objeto)
+    local total  = #anim._pares
+
+    if not estado.terminado then
+        estado.tempo = estado.tempo + Tupi.dt()
+        local durFrame   = 1.0 / anim._fps
+        local frameAtual = math.floor(estado.tempo / durFrame)
+
+        if frameAtual >= total then
+            if anim._loop then
+                estado.tempo = estado.tempo % (durFrame * total)
+                estado.frame = math.floor(estado.tempo / durFrame)
+            else
+                estado.terminado = true
+                estado.frame     = total - 1
+            end
+        else
+            estado.frame = frameAtual
+        end
+    end
+
+    local par = anim._pares[estado.frame + 1]
+    objeto[0].coluna = par.col
+    objeto[0].linha  = par.linha
+    C.tupi_objeto_enviar_batch(objeto, 0)
+end
+
+function Tupi.pararAnim(anim, objeto, frame)
+    assert(anim and anim._pares, "[Anim] pararAnim: anim inválida")
+    local chave = _chaveAnim(anim, objeto)
+    _animEstado[chave] = nil
+    local idx = math.min(frame or 0, #anim._pares - 1)
+    local par = anim._pares[idx + 1]
+    objeto[0].coluna = par.col
+    objeto[0].linha  = par.linha
+    C.tupi_objeto_enviar_batch(objeto, 0)
+end
+
+function Tupi.animTerminou(anim, objeto)
+    local estado = _animEstado[_chaveAnim(anim, objeto)]
+    return estado ~= nil and estado.terminado
+end
+
+function Tupi.animReiniciar(anim, objeto)
+    _animEstado[_chaveAnim(anim, objeto)] = nil
+end
+
+function Tupi.animLimparObjeto(objeto)
+    local sufixo = ":" .. tostring(ffi.cast("void*", objeto))
+    for chave in pairs(_animEstado) do
+        if chave:sub(-#sufixo) == sufixo then
+            _animEstado[chave] = nil
+        end
+    end
 end
 
 -- ============================================================
 -- POSIÇÃO DE OBJETOS
 -- ============================================================
--- Funciona com TupiObjeto (cdata FFI) e tabelas Lua com .x e .y
---
--- Uso tipico com rollback de colisao:
---   Tupi.salvarPosicao(jogador[0])
---   Tupi.mover(velX * dt, velY * dt, jogador[0])
---   if Tupi.col.retRet(jogador[0], parede) then
---       Tupi.voltarPosicao(jogador[0])
---   end
--- ============================================================
 
-local _posicoes_salvas = setmetatable({}, { __mode = "k" })
+local _posicoes_salvas = {}
 
--- Move o objeto somando ao x/y atual
 function Tupi.mover(dx, dy, objeto)
-    objeto.x = objeto.x + (dx or 0)
-    objeto.y = objeto.y + (dy or 0)
+    objeto[0].x = objeto[0].x + (dx or 0)
+    objeto[0].y = objeto[0].y + (dy or 0)
 end
 
--- Teleporta para coordenada absoluta
 function Tupi.teleportar(x, y, objeto)
-    objeto.x = x or objeto.x
-    objeto.y = y or objeto.y
+    objeto[0].x = x or objeto[0].x
+    objeto[0].y = y or objeto[0].y
 end
 
--- Salva a posicao atual para poder recuperar depois
 function Tupi.salvarPosicao(objeto)
     local id = tostring(ffi.cast("void*", objeto))
-    _posicoes_salvas[id] = { x = tonumber(objeto.x), y = tonumber(objeto.y) }
+    _posicoes_salvas[id] = { x = tonumber(objeto[0].x), y = tonumber(objeto[0].y) }
 end
 
--- Retorna x, y da posicao atual
 function Tupi.posicaoAtual(objeto)
-    return tonumber(objeto.x), tonumber(objeto.y)
+    return tonumber(objeto[0].x), tonumber(objeto[0].y)
 end
 
--- Retorna x, y da ultima posicao salva (nil, nil se nunca salvo)
 function Tupi.ultimaPosicao(objeto)
-    local p = _posicoes_salvas[objeto]
+    local p = _posicoes_salvas[tostring(ffi.cast("void*", objeto))]
     if not p then return nil, nil end
     return p.x, p.y
 end
 
--- Volta ao estado salvo com salvarPosicao()
 function Tupi.voltarPosicao(objeto)
-    local id = tostring(ffi.cast("void*", objeto))
-    local p = _posicoes_salvas[id]
+    local p = _posicoes_salvas[tostring(ffi.cast("void*", objeto))]
     if not p then return end
-    objeto.x = p.x
-    objeto.y = p.y
+    objeto[0].x = p.x
+    objeto[0].y = p.y
 end
 
--- Distancia entre dois objetos
 function Tupi.distanciaObjetos(a, b)
-    local dx = tonumber(b.x) - tonumber(a.x)
-    local dy = tonumber(b.y) - tonumber(a.y)
+    local dx = tonumber(b[0].x) - tonumber(a[0].x)
+    local dy = tonumber(b[0].y) - tonumber(a[0].y)
     return math.sqrt(dx * dx + dy * dy)
 end
 
--- Move suavemente em direcao a um ponto (lerp) — bom para camera
 function Tupi.moverParaAlvo(tx, ty, fator, objeto)
-    fator = fator or 0.1
-    objeto.x = objeto.x + (tx - objeto.x) * fator
-    objeto.y = objeto.y + (ty - objeto.y) * fator
+    fator       = fator or 0.1
+    objeto[0].x = objeto[0].x + (tx - objeto[0].x) * fator
+    objeto[0].y = objeto[0].y + (ty - objeto[0].y) * fator
 end
 
--- Move em direcao a outro objeto a velocidade fixa — bom para IA
 function Tupi.perseguir(alvo, vel, objeto)
-    local dx   = tonumber(alvo.x) - tonumber(objeto.x)
-    local dy   = tonumber(alvo.y) - tonumber(objeto.y)
+    local dx   = tonumber(alvo[0].x) - tonumber(objeto[0].x)
+    local dy   = tonumber(alvo[0].y) - tonumber(objeto[0].y)
     local dist = math.sqrt(dx * dx + dy * dy)
     if dist < 0.001 then return end
-    objeto.x = objeto.x + (dx / dist) * vel
-    objeto.y = objeto.y + (dy / dist) * vel
+    objeto[0].x = objeto[0].x + (dx / dist) * vel
+    objeto[0].y = objeto[0].y + (dy / dist) * vel
+end
+
+-- ============================================================
+-- HITBOX
+-- ============================================================
+
+function Tupi.hitbox(objeto, x, y, w, h, escalar)
+    local ox    = tonumber(objeto[0].x)
+    local oy    = tonumber(objeto[0].y)
+    local fator = 1.0
+    if escalar ~= false then
+        local ok, e = pcall(function() return tonumber(objeto[0].escala) end)
+        if ok and e and e > 0 then fator = e end
+    end
+    return { x = ox + x * fator, y = oy + y * fator,
+             largura = w * fator, altura = h * fator }
+end
+
+function Tupi.hitboxFixa(objeto, x, y, w, h)
+    return Tupi.hitbox(objeto, x, y, w, h, false)
+end
+
+function Tupi.hitboxDesenhar(hb, cor, espessura)
+    cor = cor or {0, 1, 0, 0.6}
+    local restaurar = _aplicarCor(cor)
+    C.tupi_retangulo_borda(hb.x, hb.y, hb.largura, hb.altura, espessura or 1.0)
+    restaurar()
+end
+
+-- ============================================================
+-- CÂMERA 2D
+-- ============================================================
+
+Tupi.camera = {}
+
+--- Reposiciona a câmera para o estado inicial (centro 0,0 | zoom 1 | sem rotação).
+function Tupi.camera.reset()
+    C.tupi_camera_reset()
+end
+
+--- Define a posição do centro da câmera no espaço do mundo.
+-- @param x  número — coordenada horizontal
+-- @param y  número — coordenada vertical
+function Tupi.camera.pos(x, y)
+    C.tupi_camera_pos(x or 0, y or 0)
+end
+
+--- Move a câmera relativamente à posição atual.
+function Tupi.camera.mover(dx, dy)
+    C.tupi_camera_mover(dx or 0, dy or 0)
+end
+
+--- Define o fator de zoom (1.0 = normal | 2.0 = 2× aproximado | 0.5 = afastado).
+function Tupi.camera.zoom(z)
+    C.tupi_camera_zoom(z or 1)
+end
+
+--- Define a rotação em radianos. Use Tupi.rad() para converter de graus.
+function Tupi.camera.rotacao(angulo)
+    C.tupi_camera_rotacao(angulo or 0)
+end
+
+--- Faz a câmera seguir suavemente um ponto (lerp exponencial).
+-- @param x, y       alvo no mundo
+-- @param velocidade fator 0–1 (padrão 0.1 — suave; 1.0 = imediato)
+function Tupi.camera.seguir(x, y, velocidade)
+    C.tupi_camera_seguir(x or 0, y or 0, velocidade or 0.1, Tupi.dt())
+end
+
+--- Retorna a posição atual da câmera (x, y).
+function Tupi.camera.posAtual()
+    return tonumber(C.tupi_camera_get_x()),
+           tonumber(C.tupi_camera_get_y())
+end
+
+--- Retorna o zoom atual.
+function Tupi.camera.zoomAtual()
+    return tonumber(C.tupi_camera_get_zoom())
+end
+
+--- Retorna a rotação atual em radianos.
+function Tupi.camera.rotacaoAtual()
+    return tonumber(C.tupi_camera_get_rotacao())
+end
+
+--- Converte posição de tela (pixels) → coordenada no mundo.
+-- Útil para saber onde o mouse está no espaço do jogo.
+function Tupi.camera.telaMundo(sx, sy)
+    local wx = ffi.new("float[1]")
+    local wy = ffi.new("float[1]")
+    C.tupi_camera_tela_mundo_lua(sx, sy, wx, wy)
+    return tonumber(wx[0]), tonumber(wy[0])
+end
+
+--- Converte coordenada do mundo → posição na tela (pixels).
+function Tupi.camera.mundoTela(wx, wy)
+    local sx = ffi.new("float[1]")
+    local sy = ffi.new("float[1]")
+    C.tupi_camera_mundo_tela_lua(wx, wy, sx, sy)
+    return tonumber(sx[0]), tonumber(sy[0])
+end
+
+--- Posição do mouse em coordenadas do mundo.
+function Tupi.camera.mouseMundo()
+    return Tupi.camera.telaMundo(Tupi.mouseX(), Tupi.mouseY())
 end
 
 return Tupi
